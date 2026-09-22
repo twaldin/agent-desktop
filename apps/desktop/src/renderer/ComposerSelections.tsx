@@ -1,13 +1,15 @@
-import type { Ref } from "react";
+import type { ReactNode, Ref } from "react";
 import { SessionAccountChoices } from "./SessionAccountChoices";
 import type { DesktopBridge, Draft, ModelChoice, OmpApprovalMode, SessionSummary } from "@agent-desktop/shared";
 import { ComposerSelectionPopup, type ComposerSelectionPopupHandle } from "./ComposerSelectionPopup";
 import { ComposerPermissions } from "./ComposerPermissions";
 import { composerModelGroups, composerModelKey, composerSelection, type ComposerCatalogState } from "./composer-catalog";
 
-export function ComposerSelections({ data, draft, session, disabled, onChange, connection, commandRef }: {
+export function ComposerSelections({ data, draft, session, disabled, onChange, connection, commandRef, sessionControlsNode, advancedControlsNode }: {
   connection?: { bridge: DesktopBridge; hostId: string; localHostId?: string; connected: boolean };
   commandRef?: Ref<ComposerSelectionPopupHandle>;
+  sessionControlsNode?: ReactNode;
+  advancedControlsNode?: ReactNode;
   data: ComposerCatalogState; draft: Draft; session?: SessionSummary | null; disabled: boolean;
   onChange(patch: { model?: ModelChoice | null; thinkingLevel?: string; approvalMode?: OmpApprovalMode }): void;
 }) {
@@ -20,7 +22,8 @@ export function ComposerSelections({ data, draft, session, disabled, onChange, c
   const selectedTitle = [draft.model ? undefined : defaultLabel, selection.entry ? `${selection.entry.provider} · ${selection.entry.contextWindow?.toLocaleString() ?? "Unknown"} context` : undefined].filter(Boolean).join(" · ") || defaultLabel;
   return <>
     <ComposerPermissions draft={draft} catalog={data.catalog} session={session} controls={data.controls} disabled={disabled} onChange={approvalMode => onChange({ approvalMode })}/>
-    <div className="composer-model-selections"><ComposerSelectionPopup commandRef={commandRef} accountChoicesNode={connection ? session ? <><SessionAccountChoices {...connection} session={session} disabled={disabled}/>{draft.model && (draft.model.provider !== session.model?.provider || draft.model.id !== session.model?.id) && <p>Your draft model applies on the next send. These accounts belong to the current session model.</p>}</> : <p>Start a conversation before choosing its native account. New conversations use the host’s native authentication.</p> : undefined} modelValue={composerModelKey(draft.model)} modelLabel={!draft.model ? selection.entry?.name ?? nativeModel?.id ?? (data.loading ? "Loading model…" : "Native default") : selection.entry?.name ?? draft.model.id} modelTitle={selectedTitle} disabled={disabled} effort={draft.thinkingLevel} effectiveEffort={selection.thinking} defaultEffortLabel={thinkingLabel} levels={selection.levels} models={[
+    {/* Session controls share the existing model popup, not the permission policy selector. */}
+    <div className="composer-model-selections"><ComposerSelectionPopup commandRef={commandRef} sessionControlsNode={sessionControlsNode} advancedControlsNode={advancedControlsNode} accountChoicesNode={connection ? session ? <><SessionAccountChoices {...connection} session={session} disabled={disabled}/>{draft.model && (draft.model.provider !== session.model?.provider || draft.model.id !== session.model?.id) && <p>Your draft model applies on the next send. These accounts belong to the current session model.</p>}</> : <p>Start a conversation before choosing its native account. New conversations use the host’s native authentication.</p> : undefined} modelValue={composerModelKey(draft.model)} modelLabel={!draft.model ? selection.entry?.name ?? nativeModel?.id ?? (data.loading ? "Loading model…" : "Native default") : selection.entry?.name ?? draft.model.id} modelTitle={selectedTitle} disabled={disabled} effort={draft.thinkingLevel} effectiveEffort={selection.thinking} defaultEffortLabel={thinkingLabel} levels={selection.levels} models={[
       { value: "", label: session ? "Follow session" : "Default", detail: defaultLabel },
       ...(draft.model && !models.some(model => composerModelKey(model) === composerModelKey(draft.model)) ? [{ value: composerModelKey(draft.model), label: `${draft.model.id} (saved draft selection)`, provider: draft.model.provider }] : []),
       ...composerModelGroups(models).flatMap(([provider, group]) => group.map(model => ({ value: composerModelKey(model), provider, detail: `${provider} · ${model.id}${model.contextWindow ? ` · ${model.contextWindow.toLocaleString()} context` : ""}`, disabled: model.disabledInSettings || model.available === false, label: `${model.name}${model.disabledInSettings ? " · provider disabled" : model.available === false ? " · unavailable" : model.authenticated === false && model.available !== true ? " · sign-in required" : model.authenticated === undefined ? " · availability unknown" : ""}` }))),

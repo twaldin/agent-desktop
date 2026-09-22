@@ -12,6 +12,7 @@ export interface AdvancedStreamControlsProps {
   sessionId?: string;
   connected: boolean;
   disabled: boolean;
+  expanded?: boolean;
 }
 export function AdvancedStreamControls(props: AdvancedStreamControlsProps) {
   const { bridge, hostId, localHostId, sessionId, connected, disabled } = props;
@@ -26,8 +27,8 @@ export function AdvancedStreamControls(props: AdvancedStreamControlsProps) {
   const snapshot = data?.controls?.advancedStream;
   const availableFields = snapshot?.fields ? Object.values(snapshot.fields).some(field => field.supported) : snapshot?.supported;
   const blocked = disabled || !connected || !data || data.loading || data.saving || !!data.error || !(snapshot?.fields || availableFields);
-  return <details className="advanced-stream-controls">
-    <summary>Advanced sampling & output</summary>
+  return <details className="advanced-stream-controls" open={props.expanded || undefined}>
+    <summary hidden={props.expanded}>Advanced sampling &amp; output</summary>
     <div className="advanced-stream-panel">
       {!sessionId ? <p>Start or select a conversation to adjust sampling and the output limit.</p> : <>
         <div className="advanced-stream-heading"><strong>Native stream controls</strong><button type="button" disabled={!connected || data?.loading || data?.saving} onClick={() => void data?.refresh()}>Reload</button></div>

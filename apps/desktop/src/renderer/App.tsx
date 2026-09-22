@@ -1,5 +1,5 @@
 import { GoalComposerIntent } from "./GoalComposerIntent";
-import { goalComposerCommand } from "./goal-composer";
+import { goalBudgetIssue, goalComposerCommand } from "./goal-composer";
 import { ExtensionStatuses, ExtensionWidgets, useExtensionSessionUi } from "./ExtensionSessionUi";
 import { SessionTreeHistory, SessionTreeEdit } from "./SessionTree";
 import { useSessionTree, type SessionTreePorts } from "./use-session-tree";
@@ -119,7 +119,7 @@ import type { ComposerSelectionPopupHandle } from "./ComposerSelectionPopup";
 import type { AttachmentMediaContext } from "./attachment-media";
 import { installAppShortcuts, type AppShortcutOptions } from "./app-shortcuts";
 import { errorMessage, useDesktop, useTranscript } from "./desktop-state";
-import { actionError as ownedActionError, clearRecoveredForceError, type ActionError } from "./action-error";
+import { actionError as ownedActionError, clearRecoveredForceError, clearRecoveredGoalBudgetError, type ActionError } from "./action-error";
 import { captureConversationMarkdown, conversationMarkdownIssue } from "./conversation-markdown";
 import { Icon } from "./Icons";
 import { TranscriptMessages } from "./Transcript";
@@ -1479,6 +1479,10 @@ export function App() {
       finally { submitting.current = false; setBusy(false); }
     }
     if (!canSend) return;
+    if (goalDraft.goal && !submissions.get(draftId)?.uncertain) {
+      const issue = goalBudgetIssue(goalDraft.goal.tokenBudget);
+      if (issue) { setActionErrorState({ message: issue, goalBudget: { hostId, draftId } }); return; }
+    }
     let browserContinuation;
     try {
       if (!selectedId && !submissions.get(draftId)?.uncertain) {
@@ -2123,6 +2127,22 @@ export function App() {
   const fullWidthContent = !contentOverlayOpen && workspaceOpen && dock.snapshot.state.rightLayout === "full";
   const contentSide = resolveContentSide(dock.snapshot.state,taskDirection);
   const rightDockColumn = !contentOverlayOpen && workspaceOpen && dockViewport.width >= 672;
+  const showPlanControls = Boolean(nativePlan.view.value?.mode === "active" || nativePlan.view.value?.review
+    || nativePlan.view.pending || nativePlan.view.uncertain || nativePlan.view.error || nativePlan.view.value?.warning);
+  const planControls = <div className="plan-composer-controls" role="group" aria-label="Native Plan mode">
+            <button type="button" className="composer-selection-trigger" aria-pressed={nativePlan.view.value?.mode === "active"}
+              disabled={!nativePlan.view.fresh || !nativePlan.view.value?.canToggle || nativePlan.view.pending || nativePlan.view.uncertain}
+              title={nativePlan.view.unavailable ?? nativePlan.view.value?.busyReason ?? "Native planning mode, separate from tool permissions"}
+              onClick={() => { const value = nativePlan.view.value; if (value) void nativePlan.state.control(nativePlan.view.owner, { sessionId: nativePlan.view.owner.sessionId, ticket: value.ticket, action: "toggle" }).catch(() => {}); }}>
+              <Icon name="check"/>Plan · {nativePlan.view.value?.mode ?? "unavailable"}
+            </button>
+            <button ref={planTrigger} type="button" className="composer-selection-trigger" aria-haspopup="dialog" aria-expanded={planOpen}
+              disabled={!nativePlan.view.value || nativePlan.view.pending || (!nativePlan.view.value.review && (nativePlan.view.value.mode !== "active" || !nativePlan.view.fresh || nativePlan.view.uncertain))}
+              title={nativePlan.view.value?.mode !== "active" && !nativePlan.view.value?.review ? "Enter Plan mode before opening its native plan artifact." : "Review the owning session’s native plan"}
+              onClick={() => void openPlanReview()}>{nativePlan.view.value?.review ? "Review plan" : "Open plan"}</button>
+            {nativePlan.view.loading && <span role="status">Refreshing Plan…</span>}
+            {(nativePlan.view.unavailable || nativePlan.view.error || nativePlan.view.value?.warning) && <span role="status">{nativePlan.view.unavailable ?? nativePlan.view.error ?? nativePlan.view.value?.warning}</span>}
+          </div>;
   return <><div ref={shell} className={`app-shell ${settingsOpen ? "settings-open" : sidebarOpen ? "" : "sidebar-hidden"}`}>
     {settingsOpen ? <SettingsSidebar page={settingsPage} onSelect={setSettingsPage} onBack={() => setSettingsOpen(false)} environmentAvailable={Boolean(state?.localEnvironments?.configuration)} hostControl={profileMenu("settings-host")}/> : <aside className="sidebar" aria-label="Projects and conversations" inert={!sidebarOpen}>
       <div className="sidebar-titlebar drag-region"><button className="icon-button no-drag" onClick={() => setSidebarOpen(false)} aria-label="Hide sidebar" title="Hide sidebar (⌘\\)"><Icon name="sidebar"/></button></div>
@@ -2275,8 +2295,10 @@ export function App() {
             {autocomplete.popup}
             <div className="composer-toolbar">
               <div className="composer-selections">
-                <ComposerSelections connection={{ bridge, hostId, localHostId: desktop.localHostId, connected }} key={`${hostId}:${draftId}:${workspaceOwner ?? ""}`} commandRef={composerSelections} data={composer} draft={draft} session={selected} disabled={Boolean(selected?.archived) || running} onChange={patch => drafts.update(draftId, patch)} />
-                {draft.goal && <GoalComposerIntent key={`${hostId}:${draftId}`} intent={draft.goal} disabled={Boolean(selected?.archived || busy || pendingSubmission?.uncertain)} onChange={goal => drafts.update(draftId, { goal })} onClear={() => { drafts.update(draftId, { goal: null }); textarea.current?.focus(); }}/>}
+                <ComposerSelections connection={{ bridge, hostId, localHostId: desktop.localHostId, connected }} key={`${hostId}:${draftId}:${workspaceOwner ?? ""}`} commandRef={composerSelections} data={composer} draft={draft} session={selected} disabled={Boolean(selected?.archived) || running} onChange={patch => drafts.update(draftId, patch)}
+                  sessionControlsNode={<>{!showPlanControls && planControls}{!forceSessionId && <p className="force-tool-help">Open a conversation to choose an active tool. Native /force can also be typed in this draft.</p>}</>}
+                  advancedControlsNode={<AdvancedStreamControls expanded bridge={bridge} hostId={hostId} localHostId={desktop.localHostId} sessionId={selected?.id} connected={connected} disabled={Boolean(selected?.archived) || running}/>}/>
+                {draft.goal && <GoalComposerIntent key={`${hostId}:${draftId}`} intent={draft.goal} disabled={Boolean(selected?.archived || busy || pendingSubmission?.uncertain)} onChange={goal => { drafts.update(draftId, { goal }); setActionErrorState(current => clearRecoveredGoalBudgetError(current, { hostId, draftId }, goal)); }} onClear={() => { drafts.update(draftId, { goal: null }); setActionErrorState(current => clearRecoveredGoalBudgetError(current, { hostId, draftId }, null)); textarea.current?.focus(); }}/>}
               </div>
               <div className="composer-send-actions">{running && <button className="stop-button" type="button" disabled={!connected} onClick={interrupt} aria-label="Stop response" title="Stop response"><Icon name="stop"/></button>}<button className="send-button" type="submit" disabled={!canSend && !canRouteGoal} aria-label={pendingSubmission?.uncertain ? "Retry pending submission" : running && followUpQueueMode === "queue" ? "Queue follow-up" : running ? "Steer agent" : "Send message"} title={connected ? pendingSubmission?.uncertain ? "Retry pending submission" : running && followUpQueueMode === "queue" ? "Queue follow-up" : running ? "Steer agent" : `Send (${normalSendShortcut})` : "Reconnect to send"}>{busy ? <span className="spinner"/> : <Icon name="arrow"/>}</button></div>
             </div>
@@ -2293,31 +2315,16 @@ export function App() {
               }).catch(cause => setActionError(errorMessage(cause))).finally(() => setBusy(false));
             }}>Check original operation</button>
           </div>)}
-          {forceSessionId ? <ForceToolControl key={`force:${hostId}:${forceSessionId}`} owner={{hostId, sessionId:forceSessionId}}
+          {forceSessionId && <ForceToolControl key={`force:${hostId}:${forceSessionId}`} owner={{hostId, sessionId:forceSessionId}}
             ownerLabel={`${selected?.title ?? knownPendingSession?.title ?? "Current conversation"} · ${state?.host.name ?? "Unavailable host"}`}
             ports={forceToolPorts} connected={connected && !selected?.archived} active={!contentOverlayOpen}
-            draftText={draft.text} recovery={submissions.forceRecovery(forceSessionId)}/>
-            : <p className="force-tool-help">Open a conversation to choose an active tool. Native /force can also be typed in this draft.</p>}
+            draftText={draft.text} recovery={submissions.forceRecovery(forceSessionId)}/>}
           <PlanExecutionContinuationControl view={nativePlan.view} connected={connected && !selected?.archived}
             retry={expected => nativePlan.state.retryExecution(expected)} refresh={() => nativePlan.state.refresh()}
             openOwner={expected => { try { nativePlan.state.openExecutionOwner(expected); } catch (cause) { setActionError(errorMessage(cause)); } }}/>
-          <div className="plan-composer-controls" role="group" aria-label="Native Plan mode">
-            <button type="button" className="composer-selection-trigger" aria-pressed={nativePlan.view.value?.mode === "active"}
-              disabled={!nativePlan.view.fresh || !nativePlan.view.value?.canToggle || nativePlan.view.pending || nativePlan.view.uncertain}
-              title={nativePlan.view.unavailable ?? nativePlan.view.value?.busyReason ?? "Native planning mode, separate from tool permissions"}
-              onClick={() => { const value = nativePlan.view.value; if (value) void nativePlan.state.control(nativePlan.view.owner, { sessionId: nativePlan.view.owner.sessionId, ticket: value.ticket, action: "toggle" }).catch(() => {}); }}>
-              <Icon name="check"/>Plan · {nativePlan.view.value?.mode ?? "unavailable"}
-            </button>
-            <button ref={planTrigger} type="button" className="composer-selection-trigger" aria-haspopup="dialog" aria-expanded={planOpen}
-              disabled={!nativePlan.view.value || nativePlan.view.pending || (!nativePlan.view.value.review && (nativePlan.view.value.mode !== "active" || !nativePlan.view.fresh || nativePlan.view.uncertain))}
-              title={nativePlan.view.value?.mode !== "active" && !nativePlan.view.value?.review ? "Enter Plan mode before opening its native plan artifact." : "Review the owning session’s native plan"}
-              onClick={() => void openPlanReview()}>{nativePlan.view.value?.review ? "Review plan" : "Open plan"}</button>
-            {nativePlan.view.loading && <span role="status">Refreshing Plan…</span>}
-            {(nativePlan.view.unavailable || nativePlan.view.error || nativePlan.view.value?.warning) && <span role="status">{nativePlan.view.unavailable ?? nativePlan.view.error ?? nativePlan.view.value?.warning}</span>}
-          </div>
+          {showPlanControls && planControls}
           <ExtensionWidgets view={extensionUi} placement="belowEditor" connected={connected}/>
           <ExtensionStatuses view={extensionUi} connected={connected}/>
-          <AdvancedStreamControls bridge={bridge} hostId={hostId} localHostId={desktop.localHostId} sessionId={selected?.id} connected={connected} disabled={Boolean(selected?.archived) || running}/>
           <div className="composer-footnote" aria-live="polite">{view.status === "saving" ? "Saving…" : view.status === "offline" ? "Draft saved on this device" : view.status === "conflict" ? "Draft conflict" : view.status === "unsaved" ? "Unsaved changes" : view.status === "error" ? "Draft not saved to host" : null}</div>
         </div>
       </>}

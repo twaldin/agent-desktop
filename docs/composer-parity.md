@@ -6,6 +6,14 @@ Read-only audit, 2026-09-05, during the release 9 packaging checkpoint. This rec
 
 The composer has real owner-host submission, scoped native model selection, streamed turns, stop/steer, saved drafts/conflicts and native permission choice. Major remaining work includes rich attachments, complete reasoning persistence, account intent before the first prompt, separate queue controls, prompt history and the reference menu/editor behavior. Reuse [draft-attachments.md](draft-attachments.md) for attachment implementation; do not create a second transport.
 
+## Blank composer follow-up
+
+The default blank composer no longer shows inactive force guidance, unavailable Plan controls, or an advanced-sampling section below the editor. Inactive Plan controls and force guidance live in the existing model/session popup; **Advanced sampling & output** opens there as a submenu. Plan remains separate from native tool permissions. Active Plan mode, review, pending/uncertain operations, warnings and errors retain their visible controls; execution continuation and Force directives/recovery remain outside the popup.
+
+Sampling state stays mounted when the submenu closes, retaining unsaved edits and receipts. Running/archived conversations can inspect these controls without enabling model/account changes or sampling mutations. Goal budget validation errors are owned by host and draft: removing the intent or correcting its budget dismisses only that error, preserves objective text, and leaves unrelated operational errors and uncertain original submissions alone.
+
+This placement adapts the pinned 7982 footer/contextual-control structure (`app-primary-139889e10fbd.js`, `d$t` at `2033726`, `zLr` at `7266884`), not a claim that Codex implements OMP sampling or force semantics. Bounded hidden production-App checks covered the blank surface, contextual access, native Plan activation/refusal, native Force arm/remove, Goal-budget recovery, unrelated-error preservation, and archived read-only inspection. They do not establish installed-window parity, provider execution, or the full test suite. Maintained renderer regressions cover budget-error ownership, correction/clear transitions, and uncertain-submission precedence.
+
 ## Evidence and interpretation
 
 - **Reference:** preserved Codex `26.901.41600`, build `7982`; `.reference/codex-26.901.41600/app.asar` SHA-256 `077cc65356aeae34c5d8b4de0b4cc383f6fb137ed1d69a9b3dfe69ffafa058ab`. JavaScript was read from its existing `/tmp/codex-reference-26.901.41600` extraction. The seven JS/CSS artifacts named below were checked against the corresponding SHA-256 integrity entries in the preserved `asar-file-list.json` and matched. No downloaded code was executed.

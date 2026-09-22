@@ -6,14 +6,16 @@ import "./composer-selection-popup.css";
 
 export interface ComposerSelectionPopupHandle { openModels(): void }
 
-export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, models, levels, effort, effectiveEffort, defaultEffortLabel, disabled, onModel, onEffort, onReset, accountChoicesNode, commandRef }: {
+export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, models, levels, effort, effectiveEffort, defaultEffortLabel, disabled, onModel, onEffort, onReset, accountChoicesNode, sessionControlsNode, advancedControlsNode, commandRef }: {
   accountChoicesNode?: ReactNode;
+  sessionControlsNode?: ReactNode;
+  advancedControlsNode?: ReactNode;
   commandRef?: Ref<ComposerSelectionPopupHandle>;
   modelValue: string; modelLabel: string; modelTitle: string; models: ModelPickerOption[]; levels: string[]; effort?: string; effectiveEffort?: string; defaultEffortLabel: string; disabled: boolean;
   onModel(value: string): void; onEffort(value?: string): void; onReset(): void;
 }) {
   const root = useRef<HTMLDivElement>(null), trigger = useRef<HTMLButtonElement>(null), menu = useRef<HTMLDivElement>(null), scrollFrame = useRef<number | undefined>(undefined);
-  const [open, setOpen] = useState<"main" | "models" | "effort" | "accounts">(), [query, setQuery] = useState("");
+  const [open, setOpen] = useState<"main" | "models" | "effort" | "accounts" | "advanced">(), [query, setQuery] = useState("");
   const [position, setPosition] = useState<CSSProperties>();
   useImperativeHandle(commandRef, () => ({ openModels() {
     if (disabled || !trigger.current?.isConnected) return;
@@ -37,11 +39,16 @@ export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, mod
   const ordinal = levels.filter(level => level !== "auto" && level !== "off");
   const activeEffort = effort ?? effectiveEffort;
   const activeOrdinal = ordinal.indexOf(activeEffort ?? "");
+  const inspectionAvailable = Boolean(advancedControlsNode || sessionControlsNode);
   const close = () => { cancelAnimationFrame(scrollFrame.current!); setOpen(undefined); setQuery(""); trigger.current?.focus({ preventScroll: true }); };
-  useEffect(() => { if (disabled && open) close(); }, [disabled, open]);
+  useEffect(() => {
+    if (!disabled || !open) return;
+    if (!inspectionAvailable) close();
+    else if (open !== "main" && open !== "advanced") setOpen("main");
+  }, [disabled, open, inspectionAvailable]);
   useEffect(() => {
     if (!open) return;
-    const frame = requestAnimationFrame(() => menu.current?.querySelector<HTMLElement>(open === "models" ? "input" : "input:not(:disabled),button:not(:disabled)")?.focus({ preventScroll: true }));
+    const frame = requestAnimationFrame(() => [...(menu.current?.querySelectorAll<HTMLElement>(open === "models" ? "input" : "input:not(:disabled),button:not(:disabled)") ?? [])].find(element => element.getClientRects().length > 0)?.focus({ preventScroll: true }));
     const outside = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node) && !menu.current?.contains(event.target as Node)) { setOpen(undefined); setQuery(""); } };
     // An account action may disable its focused button while it settles. Escape
     // still belongs to this open popup even if Chromium moved focus to the body.
@@ -57,7 +64,7 @@ export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, mod
   const moveMenuFocus = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") { event.preventDefault(); close(); return; }
     if (!(["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) || !(event.target instanceof HTMLElement) || event.target.tagName !== "BUTTON") return;
-    const buttons = [...(menu.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled):not([aria-hidden=true])") ?? [])];
+    const buttons = [...(menu.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled):not([aria-hidden=true])") ?? [])].filter(button => button.getClientRects().length > 0);
     const index = buttons.indexOf(event.target as HTMLButtonElement);
     if (index < 0) return;
     event.preventDefault();
@@ -65,12 +72,12 @@ export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, mod
     buttons[next]?.focus();
   };
   return <div className="composer-selection-popup" ref={root}>
-    <button ref={trigger} type="button" className="composer-selection-trigger" aria-label="Model and reasoning effort" aria-haspopup="menu" aria-expanded={Boolean(open)} title={modelTitle} disabled={disabled} onKeyDown={event => { if (event.key === "Escape" && open) { event.preventDefault(); close(); } }} onClick={() => { if (disabled) return; if (open) close(); else setOpen("main") }}><span>{label}</span><Icon name="chevron"/></button>
-    {open && position && createPortal(<div style={position} ref={menu} className={`composer-selection-menu ${open === "main" ? "composer-power-menu" : ""}`} role="menu" aria-label={open === "models" ? "Select model" : open === "effort" ? "Select effort" : open === "accounts" ? "Select session account" : "Composer selections"} onKeyDown={moveMenuFocus}>
+    <button ref={trigger} type="button" className="composer-selection-trigger" aria-label="Model and reasoning effort" aria-haspopup="menu" aria-expanded={Boolean(open)} title={modelTitle} disabled={disabled && !inspectionAvailable} onKeyDown={event => { if (event.key === "Escape" && open) { event.preventDefault(); close(); } }} onClick={() => { if (disabled && !inspectionAvailable) return; if (open) close(); else setOpen("main") }}><span>{label}</span><Icon name="chevron"/></button>
+    {typeof document !== "undefined" && createPortal(<div hidden={!open || !position} style={position} ref={menu} className={`composer-selection-menu ${open === "main" ? "composer-power-menu" : ""}`} role="menu" aria-label={open === "models" ? "Select model" : open === "effort" ? "Select effort" : open === "accounts" ? "Select session account" : open === "advanced" ? "Advanced sampling and output" : "Composer selections"} onKeyDown={moveMenuFocus}>
       {open === "main" && <>
         <div className="composer-selection-header">
-          {levels.length > 0 && <button role="menuitem" type="button" className="composer-effort-button" aria-label="Select effort" title="Select effort" onClick={() => { if (!disabled) setOpen("effort"); }}><Icon name="sliders"/></button>}
-          <button role="menuitem" type="button" className="composer-model-summary" aria-label="Select model" onClick={() => { if (!disabled) setOpen("models"); }}><span><b>{activeEffort ? effortLabel(activeEffort) : modelLabel}<Icon name="chevron"/></b>{activeEffort && <small>{modelLabel}</small>}</span></button>
+          {levels.length > 0 && <button role="menuitem" type="button" className="composer-effort-button" aria-label="Select effort" title="Select effort" disabled={disabled} onClick={() => { if (!disabled) setOpen("effort"); }}><Icon name="sliders"/></button>}
+          <button role="menuitem" type="button" className="composer-model-summary" aria-label="Select model" disabled={disabled} onClick={() => { if (!disabled) setOpen("models"); }}><span><b>{activeEffort ? effortLabel(activeEffort) : modelLabel}<Icon name="chevron"/></b>{activeEffort && <small>{modelLabel}</small>}</span></button>
           <button type="button" aria-label="Reset composer selections" title="Reset to default" disabled={disabled || (!modelValue && !effort)} onClick={() => { if (disabled) return; onReset(); close(); }}><Icon name="refresh"/></button>
         </div>
         {ordinal.length > 0 && <div className="composer-selection-power" style={{ "--power-progress": `${activeOrdinal < 0 ? 0 : ordinal.length === 1 ? 100 : activeOrdinal / (ordinal.length - 1) * 100}%` } as CSSProperties}>
@@ -79,9 +86,16 @@ export function ComposerSelectionPopup({ modelValue, modelLabel, modelTitle, mod
           <output className="visually-hidden">{activeOrdinal >= 0 ? ordinal[activeOrdinal] : "Select effort"}</output>
         </div>}
 
-        {accountChoicesNode && <button role="menuitem" type="button" onClick={() => { if (!disabled) setOpen("accounts"); }}>Session account<Icon name="chevron"/></button>}
+        {accountChoicesNode && <button role="menuitem" type="button" disabled={disabled} onClick={() => { if (!disabled) setOpen("accounts"); }}>Session account<Icon name="chevron"/></button>}
+        {advancedControlsNode && <button role="menuitem" type="button" onClick={() => setOpen("advanced")}>Advanced sampling &amp; output<Icon name="chevron"/></button>}
+        {sessionControlsNode && <div className="composer-native-controls">{sessionControlsNode}</div>}
       </>}
       {open === "accounts" && <><div className="composer-selection-heading"><button type="button" aria-label="Back to composer selections" onClick={() => setOpen("main")}><Icon name="chevron"/></button><strong>Session account</strong></div>{accountChoicesNode}</>}
+      {/* Keep owner-bound edits and receipts alive while the menu is closed. */}
+      <div hidden={open !== "advanced"}>
+        <div className="composer-selection-heading"><button type="button" aria-label="Back to composer selections" onClick={() => setOpen("main")}><Icon name="chevron"/></button><strong>Advanced sampling &amp; output</strong></div>
+        {advancedControlsNode}
+      </div>
       {open === "models" && <><div className="composer-selection-heading"><button type="button" aria-label="Back to composer selections" onClick={() => { if (!disabled) setOpen("main"); }}><Icon name="chevron"/></button><strong>Select model</strong></div><label className="composer-selection-search"><Icon name="search"/><input type="search" aria-label="Search models" value={query} placeholder="Search model or provider" onChange={event => { setQuery(event.target.value); }} onKeyDown={event => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape") { event.preventDefault(); close(); return; } if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); const index = event.key === "ArrowDown" ? nextModelOption(filtered, -1, 1) : nextModelOption(filtered, filtered.length, -1); if (index >= 0) menu.current?.querySelector<HTMLButtonElement>(`button[data-model-index="${index}"]`)?.focus(); return; } if (event.key === "Enter") { event.preventDefault(); const index = nextModelOption(filtered, -1, 1); if (index >= 0) chooseModel(filtered[index]!); } }}/></label><div className="composer-selection-options" role="menu">{visibleModels.map((item, index) => <button data-model-index={index} role="menuitemradio" aria-checked={item.value === modelValue} aria-disabled={Boolean(item.disabled)} disabled={item.disabled} key={item.value} type="button" onClick={() => chooseModel(item)}><span><b>{item.label}</b>{item.detail && <small>{item.detail}</small>}</span>{item.value === modelValue && <Icon name="check"/>}</button>)}{!filtered.length && <p>No models match this search.</p>}</div></>}
       {open === "effort" && <><div className="composer-selection-heading"><button type="button" aria-label="Back to composer selections" onClick={() => { if (!disabled) setOpen("main"); }}><Icon name="chevron"/></button><strong>Select effort</strong></div><button role="menuitemradio" aria-checked={!effort} type="button" onClick={() => { if (disabled) return; onEffort(undefined); close(); }}>{defaultEffortLabel}{!effort && <Icon name="check"/>}</button>{levels.map(level => <button role="menuitemradio" aria-checked={effort === level} key={level} type="button" onClick={() => { if (disabled) return; onEffort(level); close(); }}>{effortLabel(level)}{effort === level && <Icon name="check"/>}</button>)}</>}
     </div>, document.body)}

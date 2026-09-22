@@ -24,3 +24,10 @@
 .session-account-choice { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; }
 .session-account-choice small { color: var(--text-secondary); }
 .session-account-choice[aria-pressed="true"] { background: var(--bg-hover); }
+
+.composer-native-controls { border-top: 1px solid var(--border); margin-top: 6px; padding: 6px 2px 0; font-size: 12px; }
+.composer-native-controls .plan-composer-controls { flex-wrap: wrap; margin: 0; padding: 0; }
+.composer-native-controls p { margin: 6px; color: var(--secondary); }
+.composer-selection-menu .advanced-stream-controls { margin: 0; }
+.composer-selection-menu .advanced-stream-panel { padding: 8px; }
+.composer-selection-menu[hidden], .composer-selection-menu [hidden] { display: none; }
