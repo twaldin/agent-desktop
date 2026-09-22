@@ -1,10 +1,11 @@
-// Controlled public-native jobs adapter fixture. No provider request; HOME and
+// Controlled public-native jobs adapter fixture. No external provider request; HOME and
 // the agent directory are disposable. Every job row, flag and control goes
-// through the real native session and its real AsyncJobManager; only the job
-// bodies are gated promises so each native state is reached deterministically.
+// through the real native session and its real AsyncJobManager. Job bodies and
+// initial delivery are gated; a local provider settles native idle continuations.
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { Api } from "@oh-my-pi/pi-ai";
 import type { SessionJobsRequest, SessionJobsResult, SessionJobTarget } from "@agent-desktop/shared";
 
 let blockedFetches = 0;
@@ -30,6 +31,25 @@ const { SESSION_JOBS_MAX_OUTPUT_CHARS, SESSION_JOBS_MAX_RUNNING } = await import
 
 const auth = await discoverAuthStorage(agentDir), settings = await Settings.loadReadOnly({ agentDir, cwd });
 const registry = new ModelRegistry(auth, path.join(agentDir, "models.yml"), { settings });
+// Native delivery can wake an idle agent. Give that real loop a bounded local
+// provider response instead of pointing it at a deliberately blocked network.
+const { AssistantMessageEventStream } = await import("@oh-my-pi/pi-ai/utils/event-stream");
+let providerCalls = 0;
+registry.registerProvider("jobs-fixture", {
+  api: "jobs-fixture-api" as Api, baseUrl: "https://controlled.invalid", apiKey: "isolated-jobs-fixture-key",
+  models: [{ id: "base", name: "Controlled native job continuation", reasoning: false, input: ["text"], contextWindow: 128000, maxTokens: 1024,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }],
+  streamSimple(model) {
+    providerCalls++;
+    const stream = new AssistantMessageEventStream();
+    const message = { role: "assistant" as const, content: [{ type: "text" as const, text: "Background result received." }],
+      api: model.api, provider: model.provider, model: model.id, stopReason: "stop" as const, timestamp: Date.now(),
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
+    stream.push({ type: "start", partial: message });
+    stream.push({ type: "done", reason: "stop", message });
+    return stream;
+  },
+});
 const manager = SessionManager.create(cwd, path.join(agentDir, "sessions"));
 const created = await createAgentSession({ agentDir, cwd, settings, authStorage: auth, modelRegistry: registry, agentRegistry: new AgentRegistry(),
   sessionManager: manager, model: registry.find("jobs-fixture", "base"), extensions: [], hasUI: false, interactivePrompts: false, deferUsageReserveConfirmation: true });
@@ -136,12 +156,16 @@ try {
   releaseDelivery.resolve();
   assert.equal(await jobs.drainDeliveries({ filter: { ownerId }, timeoutMs: 5000 }), true);
   assert.equal(jobs.isJobResultConsumed(completedId), true, "original native delivery may consume after release");
+  assert.equal(jobs.isJobResultConsumed(largeId), true, "asynchronously formatted output also reaches native delivery");
+  assert.equal(jobs.isJobResultConsumed(failedId), true, "failed job output also reaches native delivery");
+  await session.waitForIdle();
+  assert.ok(providerCalls > 0, "native idle delivery invokes the controlled provider");
   const delivered = control("inspect", completed.target);
   assert.equal(delivered.action, "inspect");
   assert.equal(delivered.detail.consumed, true, "inspection reports an already-delivered result honestly");
   assert.equal(delivered.detail.resultText, "hello");
   assert.ok(!jobs.getDeliveryState({ ownerId }).pendingJobIds.includes(completedId));
-  result.nativeDelivery = { consumedAfterDelivery: delivered.detail.consumed };
+  result.nativeDelivery = { consumedAfterDelivery: delivered.detail.consumed, controlledProviderCalls: providerCalls };
 
   // Native id reuse: after the SDK's own eviction the same id names a different job; old targets die with the old object.
   const staleTarget = completed.target;
