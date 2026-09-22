@@ -20,7 +20,7 @@ export type SettingsPage = "keyboard-shortcuts" | "general" | "accounts" | "omp"
 export type WorkspaceTab = "files" | "changes" | "worktrees";
 export interface FileTreeView { open: boolean; width: number }
 export const defaultFileTreeView = (): FileTreeView => ({ open: false, width: 250 });
-export const environmentSectionKeys = ["environment", "side-chats", "todos", "subagents", "jobs", "sources"] as const;
+export const environmentSectionKeys = ["environment", "side-chats", "todos", "subagents", "jobs", "processes", "sources"] as const;
 export type EnvironmentSectionKey = typeof environmentSectionKeys[number];
 export type SidebarSectionKey = "pinned" | "projects" | "recents" | `custom:${string}`;
 export const defaultCollapsedSidebarSections = (): SidebarSectionKey[] => ["recents"];
@@ -63,6 +63,8 @@ export interface WindowStateBootstrap {
 export interface LocalWindowBridge {
   initial: WindowStateBootstrap;
   save(state: WindowViewState): { error?: string };
+  readProcessOperations?(scope: import("./session-process-journal").ProcessJournalScope): { entries?: import("./session-process-journal").ProcessOperationMetadata[]; error?: string };
+  saveProcessOperations?(scope: import("./session-process-journal").ProcessJournalScope, entries: readonly import("./session-process-journal").ProcessOperationMetadata[]): { error?: string };
   subscribe?(listener: (status: { error?: string }) => void): () => void;
 }
 export const defaultWindowView = (): WindowViewState => ({

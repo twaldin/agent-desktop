@@ -1,3 +1,5 @@
+import { parseSessionProcessesRequest, parseSessionProcessNativeReply } from "../../../../packages/shared/src/session-processes";
+import { NativeProcessesAdmissionError } from "../omp/session-processes";
 import { goalPromptForAdmission } from "../../../../packages/shared/src/goal-composer";
 let dapConfiguration: Promise<import("../integrations/dap").NativeDap> | undefined;
 import { parseSessionTree, parseTreeCommandId, parseTreeMutationRequest, parseTreeMutationResult } from "../../../../packages/shared/src/session-tree";
@@ -278,12 +280,16 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       ...(error === undefined ? {} : { error: remoteError(error) }), ...(forceToolReceipt === undefined ? {} : { forceToolReceipt }), phase, snapshot: snapshot() });
   };
   try {
-    if (stopping && message.operation !== "dispose" && message.operation !== "disposeBrowserEvaluation") throw new Error("OMP worker is stopping");
+    if (stopping && message.operation !== "dispose" && message.operation !== "disposeBrowserEvaluation") {
+      if (message.operation === "nativeProcesses") throw new NativeProcessesAdmissionError("OMP worker is stopping");
+      throw new Error("OMP worker is stopping");
+    }
     const interactive = ["listInteractions", "respondInteraction", "cancelInteractions", "dispose"].includes(message.operation);
     if ((promotionInFlight || promotedOwnerRetired) && !interactive) {
       // This gate precedes native dispatch. Preserve a known Todos refusal so
       // its durable receipt can release the UI without replaying the command.
       const error = new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement.");
+      if (message.operation === "nativeProcesses") Object.assign(error, { code: "PROCESSES_REJECTED" });
       if (message.operation === "mutateTree") Object.assign(error, { code: "TREE_REJECTED" });
       if (message.operation === "mutateTodos") Object.assign(error, { code: "TODOS_REJECTED" });
       throw error;
@@ -549,6 +555,15 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         const active = requireSession();
         await active.refreshGoalUsage();
         respond(true, active.getSessionActivity());
+        break;
+      }
+      case "nativeProcesses": {
+        const input = parseSessionProcessesRequest(message.args.request);
+        if (input.action === "receipt" || !session) throw new NativeProcessesAdmissionError("The original process session is unavailable.");
+        const active = requireSession(), cwd = active.cwd;
+        const value = parseSessionProcessNativeReply(await active.nativeProcesses(input), input, active.id);
+        if (stopping || requireSession() !== active || active.cwd !== cwd) throw new Error("The original process worker changed after dispatch.");
+        respond(true, value);
         break;
       }
       case "nativeJobs": {

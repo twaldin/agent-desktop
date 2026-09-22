@@ -1,3 +1,5 @@
+import { parseSessionProcessesRequest, parseSessionProcessNativeReply } from "../../../../packages/shared/src/session-processes";
+import { NativeProcessesAdmissionError } from "../omp/session-processes";
 import { goalPromptForAdmission } from "../../../../packages/shared/src/goal-composer";
 import { parseSessionTree, parseTreeCommandId, parseTreeMutationRequest, parseTreeMutationResult, type SessionTree, type TreeMutationRequest, type TreeMutationResult } from "../../../../packages/shared/src/session-tree";
 import { parseTurnReview } from "../../../../packages/shared/src/turn-review";
@@ -630,7 +632,7 @@ export class WorkerClient {
       else {
         const error = new Error(message.error?.message ?? "OMP worker operation failed");
         error.name = message.error?.name ?? "Error";
-        if (message.error?.code === "OUTCOME_UNKNOWN" || message.error?.code === "PLAN_REJECTED" || message.error?.code === "TODOS_REJECTED" || message.error?.code === "TREE_REJECTED") Object.assign(error, { code: message.error.code });
+        if (message.error?.code === "OUTCOME_UNKNOWN" || message.error?.code === "PLAN_REJECTED" || message.error?.code === "TODOS_REJECTED" || message.error?.code === "TREE_REJECTED" || message.error?.code === "PROCESSES_REJECTED") Object.assign(error, { code: message.error.code });
         // A remote unclassified failure can occur while constructing the reply
         // after native persistence. Only an explicit refusal proves no effect.
         if (pending.uncertainTransport === "tree-mutation" && message.error?.code !== "TREE_REJECTED")
@@ -1305,6 +1307,21 @@ export class WorkerRuntime {
       getComposerCompletions: query => client.request<NativeComposerCompletions>({ operation: "getComposerCompletions", args: { query } }, 5_000),
       getMessages: () => client.request<TranscriptMessage[]>({ operation: "getMessages" }, 30_000),
       getSessionActivity: () => client.request<NativeSessionActivity>({ operation: "getSessionActivity" }, 15_000),
+      nativeProcesses: async raw => {
+        const request = parseSessionProcessesRequest(raw), origin = { id: state().id, file: state().sessionFile, cwd: state().cwd };
+        if (request.action === "receipt") throw new NativeProcessesAdmissionError("Receipts belong to the host journal.");
+        if (disposeCall || client.failure) throw new NativeProcessesAdmissionError("The original process worker is unavailable.");
+        let reply: unknown;
+        try { reply = await client.request({ operation: "nativeProcesses", args: { request } }, 15_000); }
+        catch (error) {
+          if (error instanceof Error && "code" in error && error.code === "PROCESSES_REJECTED") throw new NativeProcessesAdmissionError(error.message);
+          throw error;
+        }
+        const value = parseSessionProcessNativeReply(reply, request, origin.id);
+        if (disposeCall || client.failure || state().id !== origin.id || state().sessionFile !== origin.file || state().cwd !== origin.cwd)
+          throw new Error("The original process worker changed after dispatch; inspect the saved receipt before acting again.");
+        return value;
+      },
       nativeJobs: async raw => {
         const request = parseSessionJobsRequest(raw), origin = { id: state().id, file: state().sessionFile };
         if (disposeCall || client.failure) throw new Error("The original native jobs worker is unavailable.");

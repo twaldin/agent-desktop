@@ -92,6 +92,8 @@ import { hasNativeBtwComposerWinner } from "./omp/composer-actions";
 import { nativeBtwQuestion } from "@agent-desktop/shared";
 import { ExtensionUiHttp } from "./extension-ui-http";
 import { SessionActivityHttp } from "./session-activity-http";
+import { SessionProcessesHttp } from "./session-processes-http";
+import { SessionProcessRequests, type SessionProcessesHandle } from "./session-process-requests";
 import { SessionJobsHttp } from "./session-jobs-http";
 import { SessionSubagentsHttp } from "./session-subagents-http";
 import { BtwService } from "./btw";
@@ -142,6 +144,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   let runtime!: WorkerRuntime;
   let nativeResetPolicy: NativeResetPolicy | undefined;
   let draftBrowsers: DraftBrowserHttp | undefined;
+  let sessionProcesses: SessionProcessesHttp | undefined;
   let browserObservations: BrowserObservationHttp | undefined;
   let browserHistory: BrowserHistoryHttp | undefined;
   let browserAutocomplete: BrowserAutocompleteHttp | undefined;
@@ -480,6 +483,22 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     existing: async id => stopping ? undefined : handles.get(id)?.catch(() => undefined) });
   const sessionActivity = new SessionActivityHttp({ hostId: store.host.id, sessionExists: id => Boolean(store.getSession(id)),
     getActivity: async id => (await getHandle(id)).getSessionActivity(), goalControlTicket: activity => goalControls.ticket(activity) });
+  const processBindings = new WeakMap<SessionProcessesHandle, Promise<WorkerSession>>();
+  sessionProcesses = new SessionProcessesHttp(store.host.id, new SessionProcessRequests(store.processOperations, {
+    getExistingHandle: async id => {
+      const pending = handles.get(id);
+      if (stopping || !pending) return undefined;
+      const handle = await pending.catch(() => undefined);
+      if (!handle || stopping || handles.get(id) !== pending) return undefined;
+      // Each admission retains its own original registry promise. A later read
+      // of the same handle cannot overwrite an earlier request's binding.
+      const bound: SessionProcessesHandle = { get workerFailure() { return handle.workerFailure; },
+        nativeProcesses: request => handle.nativeProcesses(request) };
+      processBindings.set(bound, pending);
+      return bound;
+    },
+    isCurrent: (id, handle) => !stopping && handles.get(id) === processBindings.get(handle),
+  }));
   const sessionJobs = new SessionJobsHttp({ hostId: store.host.id,
     sessionExists: id => !stopping && Boolean(store.getSession(id)),
     getExistingHandle: async id => stopping ? undefined : handles.get(id)?.catch(() => undefined) });
@@ -1564,6 +1583,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (extensionUiResponse) return extensionUiResponse;
         const activityResponse = await sessionActivity.route(request, url);
         if (activityResponse) return activityResponse;
+        const processesResponse = await sessionProcesses!.route(request, url);
+        if (processesResponse) return processesResponse;
         const jobsResponse = await sessionJobs.route(request, url);
         if (jobsResponse) return jobsResponse;
         const subagentsResponse = await sessionSubagents.route(request, url);
@@ -1871,6 +1892,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   let stopCall: Promise<void> | undefined;
   let stopPreparation: Promise<{
     configurationErrors: unknown[];
+    processDrain?: Promise<void>;
     pullRequestsDrain?: Promise<void>; terminalCreationDrain?: Promise<void>; mcpOwnerDrain: Promise<void>;
     browserCloseDrain?: Promise<void>; browserObservationDrain?: Promise<void>; browserHistoryDrain?: Promise<void>;
     browserAutocompleteDrain?: Promise<void>; draftBrowserDrain?: Promise<void>;
@@ -1896,6 +1918,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         server!.stop(true); tailServer?.stop(true);
         terminalsHttp!.dispose();
         nativeTerminalsHttp?.dispose();
+        const processDrain = sessionProcesses?.dispose();
+        void processDrain?.catch(() => {});
         const planEditorDrain = planExternalEditors?.dispose();
         const todoEditorDrain = todoExternalEditors?.dispose();
         void todoEditorDrain?.catch(() => {});
@@ -1921,7 +1945,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         // Native acquisition has no abort API; graceful shutdown drains it.
         const configurationOutcomes = await Promise.allSettled([acquisitions!.dispose(),integrations!.dispose(), workspaces.shutdownSubmissions(), drainRepositoryWatchPeers(), workspaces.shutdownRepositoryWatches()]);
         return { configurationErrors: configurationOutcomes.flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : []),
-          pullRequestsDrain, terminalCreationDrain, mcpOwnerDrain, browserCloseDrain, browserObservationDrain, browserHistoryDrain,
+          processDrain, pullRequestsDrain, terminalCreationDrain, mcpOwnerDrain, browserCloseDrain, browserObservationDrain, browserHistoryDrain,
           browserAutocompleteDrain, draftBrowserDrain, planEditorDrain, todoEditorDrain };
       })();
       const prepared = await stopPreparation;
@@ -1941,7 +1965,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (errors.length > 1) throw new AggregateError(errors, "Native worker handoff and reset-policy drain failed.");
       })();
       stopCleanup ??= (async () => {
-        const outcomes = await Promise.allSettled([prepared.pullRequestsDrain, automations?.dispose(), prepared.mcpOwnerDrain, networkCall, discovery, modelsRefresh, prepared.terminalCreationDrain, prepared.draftBrowserDrain, prepared.browserCloseDrain, prepared.browserObservationDrain, prepared.browserHistoryDrain, prepared.browserAutocompleteDrain,
+        const outcomes = await Promise.allSettled([prepared.processDrain, prepared.pullRequestsDrain, automations?.dispose(), prepared.mcpOwnerDrain, networkCall, discovery, modelsRefresh, prepared.terminalCreationDrain, prepared.draftBrowserDrain, prepared.browserCloseDrain, prepared.browserObservationDrain, prepared.browserHistoryDrain, prepared.browserAutocompleteDrain,
           accounts!.dispose(), terminals!.shutdown(), (async () => {
             const editorOutcome = await Promise.allSettled([prepared.planEditorDrain, prepared.todoEditorDrain]);
             const terminalOutcome = await Promise.allSettled([nativeTerminals?.shutdown()]);
@@ -1985,7 +2009,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       // Failed startup can already have admitted session reads. Begin their
       // worker retirement alongside the read drain, rather than waiting for
       // reads that may themselves need the worker to finish stopping.
-      const first = await Promise.allSettled([todoExternalEditors?.dispose(), planExternalEditors?.dispose(), mcpOwners?.dispose(), pullRequests?.dispose(), automations?.dispose(), browserObservations?.dispose(), browserHistory?.dispose(), browserAutocomplete?.dispose(), (async () => {
+      const first = await Promise.allSettled([sessionProcesses?.dispose(), todoExternalEditors?.dispose(), planExternalEditors?.dispose(), mcpOwners?.dispose(), pullRequests?.dispose(), automations?.dispose(), browserObservations?.dispose(), browserHistory?.dispose(), browserAutocomplete?.dispose(), (async () => {
         const nativeErrors: unknown[] = [];
         try { await runtime?.dispose(); } catch (failure) { nativeErrors.push(failure); }
         try { await nativeResetPolicy?.drain(); } catch (failure) { nativeErrors.push(failure); }

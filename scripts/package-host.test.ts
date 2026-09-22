@@ -48,11 +48,17 @@ test("new package admits current Goal state, rejects future state and hashes the
     store.putDraft({ id: "goal-draft", text: "Keep this objective", projectId: null, model: null, goal: { tokenBudget: "1200" } }, 0);
     expect(checkHostStateCompatibility(manifest, stateRoot).checkedSchemaVersion).toBe(27);
     expect(store.getDraft("goal-draft")?.goal).toEqual({ tokenBudget: "1200" });
+    store.upsertSession({ id: "process-session", hostId: store.host.id, projectId: null, cwd: stateRoot, title: "Process fixture",
+      status: "idle", sessionFile: join(stateRoot, "never-opened.jsonl"), model: null, createdAt: 1, updatedAt: 1, archived: false });
+    store.processOperations.claim({ action: "stop", operationId: "packaging-operation", owner: { nativeSessionId: "process-session", epoch: "fixture", projectDir: stateRoot },
+      target: { brokerId: "fixture", name: "server", id: "original", generation: 1 } });
+    expect(checkHostStateCompatibility(manifest, stateRoot).checkedSchemaVersion).toBe(28);
+    expect(store.processOperations.get("process-session", "packaging-operation")?.status).toBe("pending");
   } finally { store.close(); }
   const future = new Database(join(stateRoot, "state.sqlite"));
-  try { future.exec("PRAGMA user_version = 28"); } finally { future.close(); }
-  expect(() => checkHostStateCompatibility(manifest, stateRoot)).toThrow("schema 28");
-  expect(manifest.stateSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]);
+  try { future.exec("PRAGMA user_version = 29"); } finally { future.close(); }
+  expect(() => checkHostStateCompatibility(manifest, stateRoot)).toThrow("schema 29");
+  expect(manifest.stateSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]);
   expect(manifest.files["scripts/host-state-compatibility.ts"]).toBe(hash(await readFile(join(repository, "scripts/host-state-compatibility.ts"))));
   expect(manifest.files["scripts/restore-pinned-omp-cli-mode.ts"]).toBe(hash(await readFile(join(repository, "scripts/restore-pinned-omp-cli-mode.ts"))));
   expect(manifest.files["patches/@oh-my-pi%2Fpi-coding-agent@18.1.10.patch"]).toBe(hash(ompPatch));

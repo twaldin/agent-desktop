@@ -236,6 +236,65 @@ index 6d66e30..d8a6893 100644
      catalogPath: string;
      addedAt: string;
      updatedAt: string;
+diff --git a/dist/types/launch/client.d.ts b/dist/types/launch/client.d.ts
+index fc59c11..8e22cd9 100644
+--- a/dist/types/launch/client.d.ts
++++ b/dist/types/launch/client.d.ts
+@@ -1,4 +1,4 @@
+-import { type DaemonCompletionNotification, type DaemonOperation, type DaemonRpcResult } from "./protocol.js";
++import { type DaemonCompletionNotification, type DaemonOperation, type DaemonRpcResult, type DaemonProcessOperation, type DaemonProcessResult } from "./protocol.js";
+ /** Broker location and lifecycle overrides used by smoke tests and isolated consumers. */
+ export interface DaemonBrokerClientOptions {
+     /** Runtime directory override; defaults to the project-scoped config path. */
+@@ -16,6 +16,7 @@ export interface DaemonBrokerClient {
+     /** Canonical project directory or synthetic directory identifying a global scope. */
+     readonly projectDir: string;
+     request(operation: DaemonOperation, signal?: AbortSignal): Promise<DaemonRpcResult>;
++	request(operation: DaemonProcessOperation, signal?: AbortSignal): Promise<DaemonProcessResult>;
+     close(): void;
+ }
+ /** A request reached the broker and the broker rejected the operation. */
+diff --git a/dist/types/launch/protocol.d.ts b/dist/types/launch/protocol.d.ts
+index 25e555e..13db1aa 100644
+--- a/dist/types/launch/protocol.d.ts
++++ b/dist/types/launch/protocol.d.ts
+@@ -146,6 +146,22 @@ export type DaemonRpcResult = {
+ } | {
+     op: "shutdown";
+ };
++/** An observation of one process generation in one running broker. */
++export interface DaemonObservedTarget {
++    brokerId: string;
++    name: string;
++    id: string;
++    generation: number;
++}
++export type DaemonNamedOperation = Extract<DaemonOperation, { name: string }>;
++/** Unknown operation tags fail closed on brokers predating this capability. */
++export type DaemonProcessOperation = DaemonOperation
++    | { op: "observe" }
++    | { op: "guarded"; target: DaemonObservedTarget; operation: DaemonNamedOperation };
++export type DaemonProcessResult = DaemonRpcResult
++    | { op: "observe"; brokerId: string; daemons: { target: DaemonObservedTarget; daemon: DaemonSnapshot }[] }
++    | { op: "guarded"; target: DaemonObservedTarget; result: DaemonRpcResult };
++
+ /** Authenticated request envelope used by socket clients. */
+ export interface DaemonWireRequest {
+     id: string;
+@@ -157,7 +173,7 @@ export interface DaemonWireRequest {
+     completionUnsubscribes?: string[];
+     completionReplays?: string[];
+     completionSubscriptionId?: string;
+-    operation: DaemonOperation;
++    operation: DaemonProcessOperation;
+ }
+ /** Response envelope kept raw until matched with its pending operation. */
+ export type DaemonWireResponse = {
+@@ -189,3 +205,4 @@ export declare function parseDaemonWireResponse(value: unknown): DaemonWireRespo
+ export declare function parseDaemonWireMessage(value: unknown): DaemonWireMessage;
+ /** Decode a broker result using its pending operation as the discriminator. */
+ export declare function parseDaemonRpcResult(operation: DaemonOperation, value: unknown): DaemonRpcResult;
++export declare function parseDaemonRpcResult(operation: DaemonProcessOperation, value: unknown): DaemonProcessResult;
 diff --git a/dist/types/lsp/config.d.ts b/dist/types/lsp/config.d.ts
 index 0b2dcd7..6c6e8ce 100644
 --- a/dist/types/lsp/config.d.ts
@@ -2990,6 +3049,427 @@ index fd101ff..109e85f 100644
  	catalogPath: string;
  	addedAt: string;
  	updatedAt: string;
+diff --git a/src/launch/broker.ts b/src/launch/broker.ts
+index 9a4397b..391683f 100644
+--- a/src/launch/broker.ts
++++ b/src/launch/broker.ts
+@@ -17,9 +17,9 @@ import {
+ 	DAEMON_PTY_ROWS,
+ 	DAEMON_RUNTIME_DIR_ENV,
+ 	type DaemonCompletionNotification,
+-	type DaemonOperation,
++	type DaemonProcessOperation,
+ 	type DaemonReadySpec,
+-	type DaemonRpcResult,
++	type DaemonProcessResult,
+ 	type DaemonSignal,
+ 	type DaemonSnapshot,
+ 	type DaemonSpec,
+@@ -348,6 +348,7 @@ function connectPort(host: string, port: number): Promise<boolean> {
+ }
+ 
+ class DaemonBroker {
++	readonly #observationId = crypto.randomUUID();
+ 	readonly #projectDir: string;
+ 	readonly #runtimeDir: string;
+ 	readonly #endpoint: string;
+@@ -558,8 +559,41 @@ class DaemonBroker {
+ 		}
+ 	}
+ 
+-	async #dispatch(operation: DaemonOperation): Promise<DaemonRpcResult> {
++	async #guarded(operation: Extract<DaemonProcessOperation, { op: "guarded" }>): Promise<DaemonProcessResult> {
++		const record = this.#record(operation.target.name);
++		let generation = operation.target.generation;
++		const assertCurrent = (): void => {
++			if (this.#shuttingDown || operation.target.brokerId !== this.#observationId || this.#records.get(record.spec.name) !== record
++				|| operation.target.id !== record.snapshot.id || record.generation !== generation || this.#startingNames.has(record.spec.name)) {
++				throw new Error("The observed process or broker has changed; refresh before acting");
++			}
++		};
++		assertCurrent();
++		const result = await this.#dispatch(operation.operation, assertCurrent, next => {
++			if (next !== generation + 1) throw new Error("Unexpected process restart generation");
++			generation = next;
++			assertCurrent();
++		});
++		assertCurrent();
++		if (result.op === "observe" || result.op === "guarded") throw new Error("Unexpected nested process result");
++		// Do not expose live snapshot objects across the wire-response await.
++		return { op: "guarded", target: { ...operation.target, generation }, result: structuredClone(result) };
++	}
++
++	async #dispatch(operation: DaemonProcessOperation, assertCurrent: () => void = () => {}, adoptGeneration?: (generation: number) => void): Promise<DaemonProcessResult> {
++		assertCurrent();
+ 		switch (operation.op) {
++			case "observe": {
++				await Promise.all([...this.#records.values()].map(record => this.#refreshDetached(record)));
++				if (this.#shuttingDown) throw new Error("Daemon broker is shutting down");
++				return { op: "observe", brokerId: this.#observationId,
++					daemons: orderDaemonsForListing([...this.#records.values()].map(record => record.snapshot)).map(daemon => {
++						const record = this.#record(daemon.name);
++						return { target: { brokerId: this.#observationId, name: daemon.name, id: daemon.id, generation: record.generation }, daemon: structuredClone(daemon) };
++					}) };
++			}
++			case "guarded":
++				return this.#guarded(operation);
+ 			case "ping":
+ 				return { op: "ping", projectDir: this.#projectDir };
+ 			case "start":
+@@ -572,21 +606,23 @@ class DaemonBroker {
+ 				};
+ 			}
+ 			case "logs":
+-				return this.#logs(operation);
++				return this.#logs(operation, assertCurrent);
+ 			case "wait":
+-				return this.#wait(operation);
++				return this.#wait(operation, assertCurrent);
+ 			case "send":
+-				return this.#send(operation);
++				return this.#send(operation, assertCurrent);
+ 			case "stop": {
+ 				const record = this.#record(operation.name);
+-				await this.#stopRecord(record, operation.timeoutMs);
++				await this.#stopRecord(record, operation.timeoutMs, assertCurrent);
++				assertCurrent();
+ 				return { op: "stop", daemon: record.snapshot };
+ 			}
+ 			case "restart":
+-				return this.#restart(operation.name);
++				return this.#restart(operation.name, assertCurrent, adoptGeneration);
+ 			case "describe": {
+ 				const record = this.#record(operation.name);
+ 				await this.#refreshDetached(record);
++				assertCurrent();
+ 				return { op: "describe", daemon: record.snapshot, spec: record.spec };
+ 			}
+ 			case "shutdown":
+@@ -594,7 +630,7 @@ class DaemonBroker {
+ 		}
+ 	}
+ 
+-	async #start(spec: DaemonSpec, owner?: string): Promise<DaemonRpcResult> {
++	async #start(spec: DaemonSpec, owner?: string): Promise<DaemonProcessResult> {
+ 		if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$/.test(spec.name)) {
+ 			throw new Error("Daemon name must be 1-48 letters, numbers, dots, underscores, or hyphens");
+ 		}
+@@ -686,8 +722,10 @@ class DaemonBroker {
+ 		return { op: "start", daemon: record.snapshot, readyTimedOut };
+ 	}
+ 
+-	async #launch(record: ManagedDaemon): Promise<void> {
++	async #launch(record: ManagedDaemon, assertCurrent: () => void = () => {}, adoptGeneration?: (generation: number) => void): Promise<void> {
++		assertCurrent();
+ 		record.generation++;
++		adoptGeneration?.(record.generation);
+ 		const generation = record.generation;
+ 		record.stopRequested = false;
+ 		record.snapshot.state = record.spec.ready ? "starting" : "running";
+@@ -705,7 +743,7 @@ class DaemonBroker {
+ 		record.outputOffset = 0;
+ 		this.#persist(record);
+ 		try {
+-			if (record.spec.detached) await this.#launchDetached(record, generation);
++			if (record.spec.detached) await this.#launchDetached(record, generation, assertCurrent);
+ 			else if (record.spec.pty) await this.#launchPty(record, generation);
+ 			else this.#launchPipe(record, generation);
+ 			if (record.spec.ready?.port !== undefined) void this.#pollPort(record, generation, record.spec.ready);
+@@ -810,9 +848,10 @@ class DaemonBroker {
+ 			);
+ 	}
+ 
+-	async #launchDetached(record: ManagedDaemon, generation: number): Promise<void> {
++	async #launchDetached(record: ManagedDaemon, generation: number, assertCurrent: () => void = () => {}): Promise<void> {
+ 		const logPath = path.join(record.dir, LOG_FILE);
+ 		const output = await fs.open(logPath, "a", 0o600);
++		try { assertCurrent(); } catch (error) { await output.close(); throw error; }
+ 		try {
+ 			const process = Bun.spawn([record.spec.application, ...record.spec.args], {
+ 				cwd: record.spec.cwd,
+@@ -1025,9 +1064,10 @@ class DaemonBroker {
+ 		this.#scheduleIdleShutdown();
+ 	}
+ 
+-	async #logs(operation: Extract<DaemonOperation, { op: "logs" }>): Promise<DaemonRpcResult> {
++	async #logs(operation: Extract<DaemonProcessOperation, { op: "logs" }>, assertCurrent: () => void = () => {}): Promise<DaemonProcessResult> {
+ 		const record = this.#record(operation.name);
+ 		await this.#refreshDetached(record);
++		assertCurrent();
+ 		const cursor = operation.cursor ?? record.snapshot.outputBytes;
+ 		let timedOut = false;
+ 		if (operation.follow && record.snapshot.outputBytes <= cursor && !terminalState(record.snapshot.state)) {
+@@ -1038,6 +1078,7 @@ class DaemonBroker {
+ 			);
+ 			timedOut = !changed;
+ 		}
++		assertCurrent();
+ 		const lines = Math.max(1, Math.min(1_000, Math.floor(operation.lines)));
+ 		const output = record.log
+ 			? await record.log.read(operation.head, lines, record.snapshot.outputBytes, operation.grep)
+@@ -1054,6 +1095,7 @@ class DaemonBroker {
+ 			terminalOutput !== undefined && operation.renderTerminalRows === true
+ 				? await renderTerminalOutput(terminalOutput, { head: operation.head, maxRows: lines })
+ 				: undefined;
++		assertCurrent();
+ 		return {
+ 			op: "logs",
+ 			name: record.snapshot.name,
+@@ -1069,13 +1111,14 @@ class DaemonBroker {
+ 		};
+ 	}
+ 
+-	async #wait(operation: Extract<DaemonOperation, { op: "wait" }>): Promise<DaemonRpcResult> {
++	async #wait(operation: Extract<DaemonProcessOperation, { op: "wait" }>, assertCurrent: () => void = () => {}): Promise<DaemonProcessResult> {
+ 		const record = this.#record(operation.name);
+ 		// A wait observes exactly one launch generation. Automatic or explicit
+ 		// relaunches reuse the managed record, so polling the record without this
+ 		// binding can hang past an exit or consume the replacement's output.
+ 		const boundGeneration = record.generation;
+ 		await this.#refreshDetached(record);
++		assertCurrent();
+ 		let matched: string | undefined;
+ 		let pattern: RegExp | undefined;
+ 		if (operation.pattern) {
+@@ -1107,6 +1150,7 @@ class DaemonBroker {
+ 			return readyObserved() || terminalState(record.snapshot.state);
+ 		};
+ 		const woke = condition() || (await this.#waitUntil(record, condition, operation.timeoutMs));
++		assertCurrent();
+ 		if (generationEnded()) {
+ 			const exit = record.snapshot.exitCode === undefined ? "" : ` with exit code ${record.snapshot.exitCode}`;
+ 			throw new Error(
+@@ -1121,9 +1165,10 @@ class DaemonBroker {
+ 		return { op: "wait", daemon: record.snapshot, matched, timedOut };
+ 	}
+ 
+-	async #send(operation: Extract<DaemonOperation, { op: "send" }>): Promise<DaemonRpcResult> {
++	async #send(operation: Extract<DaemonProcessOperation, { op: "send" }>, assertCurrent: () => void = () => {}): Promise<DaemonProcessResult> {
+ 		const record = this.#record(operation.name);
+ 		await this.#refreshDetached(record);
++		assertCurrent();
+ 		if (terminalState(record.snapshot.state) || record.snapshot.state === "stopping") {
+ 			throw new Error(`Daemon ${operation.name} is ${record.snapshot.state}`);
+ 		}
+@@ -1137,6 +1182,7 @@ class DaemonBroker {
+ 				await record.input.flush();
+ 			} else throw new Error(`Daemon ${operation.name} stdin is unavailable`);
+ 		}
++		assertCurrent();
+ 		if (operation.signal) {
+ 			if (process.platform === "win32" && record.pty) {
+ 				if (operation.signal === "SIGINT") record.pty.write("\u0003");
+@@ -1150,8 +1196,9 @@ class DaemonBroker {
+ 		return { op: "send", daemon: record.snapshot };
+ 	}
+ 
+-	async #stopRecord(record: ManagedDaemon, timeoutMs: number): Promise<void> {
++	async #stopRecord(record: ManagedDaemon, timeoutMs: number, assertCurrent: () => void = () => {}): Promise<void> {
+ 		await this.#refreshDetached(record);
++		assertCurrent();
+ 		if (terminalState(record.snapshot.state)) return;
+ 		record.stopRequested = true;
+ 		if (record.restartTimer) {
+@@ -1170,17 +1217,23 @@ class DaemonBroker {
+ 		if (processRef) await processRef.terminate({ group: true, gracefulMs: timeoutMs, timeoutMs: timeoutMs + 1_000 });
+ 		else record.pty?.kill();
+ 		const settled = await this.#waitUntil(record, () => terminalState(record.snapshot.state), timeoutMs + 1_000);
++		assertCurrent();
+ 		if (!settled && record.pty) record.pty.kill();
+ 	}
+ 
+-	async #restart(name: string): Promise<DaemonRpcResult> {
++	async #restart(name: string, assertCurrent: () => void = () => {}, adoptGeneration?: (generation: number) => void): Promise<DaemonProcessResult> {
+ 		const record = this.#record(name);
+-		await this.#stopRecord(record, 2_000);
++		await this.#stopRecord(record, 2_000, assertCurrent);
++		assertCurrent();
+ 		await record.log?.close();
+-		record.log = await DaemonLog.open(record.dir);
++		assertCurrent();
++		const log = await DaemonLog.open(record.dir);
++		try { assertCurrent(); } catch (error) { await log.close(); throw error; }
++		record.log = log;
+ 		record.stopRequested = false;
+-		await this.#launch(record);
++		await this.#launch(record, assertCurrent, adoptGeneration);
+ 		await record.persistQueue;
++		assertCurrent();
+ 		return { op: "restart", daemon: record.snapshot };
+ 	}
+ 
+diff --git a/src/launch/client.ts b/src/launch/client.ts
+index e99d72e..c38eb72 100644
+--- a/src/launch/client.ts
++++ b/src/launch/client.ts
+@@ -12,8 +12,8 @@ import {
+ 	DAEMON_PROJECT_DIR_ENV,
+ 	DAEMON_RUNTIME_DIR_ENV,
+ 	type DaemonCompletionNotification,
+-	type DaemonOperation,
+-	type DaemonRpcResult,
++	type DaemonOperation, type DaemonRpcResult, type DaemonProcessOperation,
++	type DaemonProcessResult,
+ 	type DaemonWireMessage,
+ 	parseDaemonRpcResult,
+ 	parseDaemonWireMessage,
+@@ -29,8 +29,8 @@ const BROKER_SPAWN_OPTIONS = resolveDaemonSpawnOptions({
+ });
+ 
+ interface PendingRequest {
+-	operation: DaemonOperation;
+-	resolve: (result: DaemonRpcResult) => void;
++	operation: DaemonProcessOperation;
++	resolve: (result: DaemonProcessResult) => void;
+ 	reject: (error: Error) => void;
+ 	timer: NodeJS.Timeout;
+ 	removeAbort?: () => void;
+@@ -58,6 +58,7 @@ export interface DaemonBrokerClient {
+ 	/** Canonical project directory or synthetic directory identifying a global scope. */
+ 	readonly projectDir: string;
+ 	request(operation: DaemonOperation, signal?: AbortSignal): Promise<DaemonRpcResult>;
++	request(operation: DaemonProcessOperation, signal?: AbortSignal): Promise<DaemonProcessResult>;
+ 	close(): void;
+ }
+ 
+@@ -93,8 +94,10 @@ async function readOrCreateToken(runtimeDir: string): Promise<string> {
+ 	throw new Error(`Timed out initializing daemon broker token in ${runtimeDir}`);
+ }
+ 
+-function requestTimeoutMs(operation: DaemonOperation): number {
++function requestTimeoutMs(operation: DaemonProcessOperation): number {
+ 	switch (operation.op) {
++		case "guarded":
++			return requestTimeoutMs(operation.operation);
+ 		case "start":
+ 			return (operation.spec.ready?.timeoutMs ?? CONNECT_TIMEOUT_MS) + 5_000;
+ 		case "wait":
+@@ -160,7 +163,11 @@ class SocketDaemonClient implements DaemonBrokerClient {
+ 		this.#idleGraceMs = options.idleGraceMs;
+ 	}
+ 
+-	async request(operation: DaemonOperation, signal?: AbortSignal): Promise<DaemonRpcResult> {
++	request(operation: DaemonOperation, signal?: AbortSignal): Promise<DaemonRpcResult>;
++	request(operation: DaemonProcessOperation, signal?: AbortSignal): Promise<DaemonProcessResult>;
++	async request(operation: DaemonProcessOperation, signal?: AbortSignal): Promise<DaemonProcessResult> {
++		// Retain the caller's original target and input across connection awaits.
++		if (operation.op === "guarded") operation = structuredClone(operation);
+ 		if (this.#closed) throw new Error("Daemon broker client is closed");
+ 		if (signal?.aborted) throw new Error("Daemon broker request aborted");
+ 		await this.#connect();
+@@ -170,7 +177,7 @@ class SocketDaemonClient implements DaemonBrokerClient {
+ 		const completionUnsubscribes = [...this.#completionUnsubscribes];
+ 		const completionReplays = [...this.#completionReplays];
+ 		const id = crypto.randomUUID();
+-		const { promise, resolve, reject } = Promise.withResolvers<DaemonRpcResult>();
++		const { promise, resolve, reject } = Promise.withResolvers<DaemonProcessResult>();
+ 		const timer = setTimeout(() => {
+ 			const pending = this.#pending.get(id);
+ 			if (!pending) return;
+diff --git a/src/launch/protocol.ts b/src/launch/protocol.ts
+index befa630..ed0420e 100644
+--- a/src/launch/protocol.ts
++++ b/src/launch/protocol.ts
+@@ -118,6 +118,22 @@ export type DaemonRpcResult =
+ 	| { op: "describe"; daemon: DaemonSnapshot; spec: DaemonSpec }
+ 	| { op: "shutdown" };
+ 
++/** An observation of one process generation in one running broker. */
++export interface DaemonObservedTarget {
++    brokerId: string;
++    name: string;
++    id: string;
++    generation: number;
++}
++export type DaemonNamedOperation = Extract<DaemonOperation, { name: string }>;
++/** Unknown operation tags fail closed on brokers predating this capability. */
++export type DaemonProcessOperation = DaemonOperation
++    | { op: "observe" }
++    | { op: "guarded"; target: DaemonObservedTarget; operation: DaemonNamedOperation };
++export type DaemonProcessResult = DaemonRpcResult
++    | { op: "observe"; brokerId: string; daemons: { target: DaemonObservedTarget; daemon: DaemonSnapshot }[] }
++    | { op: "guarded"; target: DaemonObservedTarget; result: DaemonRpcResult };
++
+ /** Authenticated request envelope used by socket clients. */
+ export interface DaemonWireRequest {
+ 	id: string;
+@@ -129,7 +145,7 @@ export interface DaemonWireRequest {
+ 	completionUnsubscribes?: string[];
+ 	completionReplays?: string[];
+ 	completionSubscriptionId?: string;
+-	operation: DaemonOperation;
++	operation: DaemonProcessOperation;
+ }
+ 
+ /** Response envelope kept raw until matched with its pending operation. */
+@@ -338,7 +354,28 @@ export function parseDaemonWireMessage(value: unknown): DaemonWireMessage {
+ 	return parseDaemonWireResponse(value);
+ }
+ 
+-function parseDaemonOperation(value: unknown): DaemonOperation {
++function observedTarget(value: unknown): DaemonObservedTarget {
++	const source = record(value, "observed process target");
++	const generation = numberValue(source.generation, "target.generation");
++	if (!Number.isSafeInteger(generation) || generation < 0) throw new Error("Invalid process generation");
++	return { brokerId: stringValue(source.brokerId, "target.brokerId"), name: stringValue(source.name, "target.name"),
++		id: stringValue(source.id, "target.id"), generation };
++}
++
++function parseDaemonOperation(value: unknown): DaemonProcessOperation {
++	const source = record(value, "daemon operation");
++	if (source.op === "observe") return { op: "observe" };
++	if (source.op === "guarded") {
++		const operation = parseDaemonLegacyOperation(source.operation);
++		if (!("name" in operation)) throw new Error("Guarded operation requires an original named process");
++		const target = observedTarget(source.target);
++		if (target.name !== operation.name) throw new Error("Guarded process name does not match its observation");
++		return { op: "guarded", target, operation };
++	}
++	return parseDaemonLegacyOperation(value);
++}
++
++function parseDaemonLegacyOperation(value: unknown): DaemonOperation {
+ 	const source = record(value, "daemon operation");
+ 	const op = stringValue(source.op, "operation.op");
+ 	switch (op) {
+@@ -400,7 +437,36 @@ function parseDaemonOperation(value: unknown): DaemonOperation {
+ }
+ 
+ /** Decode a broker result using its pending operation as the discriminator. */
+-export function parseDaemonRpcResult(operation: DaemonOperation, value: unknown): DaemonRpcResult {
++export function parseDaemonRpcResult(operation: DaemonOperation, value: unknown): DaemonRpcResult;
++export function parseDaemonRpcResult(operation: DaemonProcessOperation, value: unknown): DaemonProcessResult;
++export function parseDaemonRpcResult(operation: DaemonProcessOperation, value: unknown): DaemonProcessResult {
++	if (operation.op === "observe") {
++		const source = record(value, "process observation");
++		if (source.op !== "observe" || !Array.isArray(source.daemons)) throw new Error("Invalid process observation");
++		const brokerId = stringValue(source.brokerId, "brokerId");
++		const daemons = Array.from(source.daemons, item => {
++			const row = record(item, "observed process"), target = observedTarget(row.target), daemon = parseDaemonSnapshot(row.daemon);
++			if (target.brokerId !== brokerId || target.name !== daemon.name || target.id !== daemon.id) throw new Error("Process observation identity mismatch");
++			return { target, daemon };
++		});
++		if (new Set(daemons.map(row => row.target.name)).size !== daemons.length) throw new Error("Duplicate observed process");
++		return { op: "observe", brokerId, daemons };
++	}
++	if (operation.op === "guarded") {
++		const source = record(value, "guarded process result"), target = observedTarget(source.target);
++		const expected = operation.target;
++		if (source.op !== "guarded" || target.brokerId !== expected.brokerId || target.name !== expected.name || target.id !== expected.id
++			|| target.generation !== expected.generation + (operation.operation.op === "restart" ? 1 : 0)) throw new Error("Guarded process result identity mismatch");
++		if (record(source.result, "guarded payload").op !== operation.operation.op) throw new Error("Guarded process operation mismatch");
++		const result = parseDaemonLegacyResult(operation.operation, source.result);
++		if (("daemon" in result && (result.daemon.id !== target.id || result.daemon.name !== target.name))
++			|| ("name" in result && result.name !== target.name)) throw new Error("Guarded process payload identity mismatch");
++		return { op: "guarded", target, result };
++	}
++	return parseDaemonLegacyResult(operation, value);
++}
++
++function parseDaemonLegacyResult(operation: DaemonOperation, value: unknown): DaemonRpcResult {
+ 	const source = record(value, `${operation.op} result`);
+ 	switch (operation.op) {
+ 		case "ping":
 diff --git a/src/lsp/config.ts b/src/lsp/config.ts
 index 79763ce..113f970 100644
 --- a/src/lsp/config.ts

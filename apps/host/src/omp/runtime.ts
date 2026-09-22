@@ -21,6 +21,9 @@ import { parsePlanControlRequest, parsePlanDocumentReadRequest, parsePlanMutatio
   type PlanControlRequest, type PlanControlResult, type SessionPlan } from "../../../../packages/shared/src/session-plan";
 import type { PlanDocumentSection } from "../../../../packages/shared/src/plan-document";
 import { NativeSessionTodos } from "./session-todos";
+import { createDaemonBrokerClient } from "@oh-my-pi/pi-coding-agent/launch/client";
+import { NativeSessionProcessScope } from "./session-processes";
+import type { SessionProcessNativeRequest, SessionProcessNativeReply } from "../../../../packages/shared/src/session-processes";
 import { NativeSessionJobs } from "./session-jobs";
 import { NativeSessionSubagents } from "./session-subagents";
 import type { SessionSubagentsRequest, SessionSubagentsResult } from "../../../../packages/shared/src/session-subagents";
@@ -147,6 +150,7 @@ export interface OmpSession {
   flushSession(): Promise<{ sessionId: string; sessionFile: string; cwd: string }>;
   getSessionActivity(): NativeSessionActivity;
   nativeJobs(request: SessionJobsRequest): SessionJobsResult;
+  nativeProcesses(request: SessionProcessNativeRequest): Promise<SessionProcessNativeReply>;
   nativeSubagents(request: SessionSubagentsRequest): Promise<SessionSubagentsResult>;
   refreshGoalUsage(): Promise<void>;
   mutateGoal(request: GoalMutationRequest): Promise<NativeGoalActivity | null>;
@@ -612,6 +616,7 @@ export class OmpRuntime {
         for (const listener of listeners) listener(event);
       });
       let disposed = false;
+      let locationChanging = false;
       let disposeCall: Promise<void> | undefined;
       let promptInFlight = false;
       let admissionPending = false;
@@ -629,7 +634,7 @@ export class OmpRuntime {
       let mcpMutation: Promise<unknown> | undefined;
       let pluginReload: Promise<void> | undefined;
       let goalPreviousTools = session.getEnabledToolNames().filter(name => name !== "goal");
-      const assertSessionActive = () => { if (disposed) throw new Error("OMP session is disposed"); if (promotionState !== "idle") throw new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement."); };
+      const assertSessionActive = () => { if (locationChanging) throw new Error("The native task location is changing."); if (disposed) throw new Error("OMP session is disposed"); if (promotionState !== "idle") throw new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement."); };
       const captureSessionId = manager.getSessionId();
       const turnCapture = new TurnCapture(manager, () => {
         // Started native finalization must still join after public disposal fences new reads.
@@ -639,6 +644,10 @@ export class OmpRuntime {
         await turnCapture.observe(event);
         if (!disposed && promotionState === "idle") for (const listener of listeners) listener({ type: "turn_review_changed" });
       });
+      const nativeProcesses = new NativeSessionProcessScope(captureSessionId, () => manager.getCwd(), () => {
+        assertSessionActive();
+        if (manager.getSessionId() !== captureSessionId) throw new Error("The original process session changed.");
+      }, createDaemonBrokerClient);
       const nativeJobs = new NativeSessionJobs(session, assertSessionActive, manager.getSessionId());
       const nativeSubagents = new NativeSessionSubagents(session, assertSessionActive, captureSessionId);
       let applyFreshProviderIdentity = () => {};
@@ -868,6 +877,7 @@ export class OmpRuntime {
             sources: { availability: "unsupported", reason: "OMP 18.1.10 does not expose a stable consumed-source registry for this session." } };
         },
         nativeJobs: request => nativeJobs.request(request),
+        nativeProcesses: request => nativeProcesses.request(request),
         nativeSubagents: request => nativeSubagents.request(request),
         refreshGoalUsage: async () => { assertSessionActive(); await nativeGoalController.refreshUsage(); },
         getGoalContinuationEligibility: () => nativeGoalController.eligibility(),
@@ -1666,6 +1676,10 @@ export class OmpRuntime {
           assertSnapshotReady();
           const destination = await requireDirectory(cwd), source = manager.getCwd();
           if (destination === source) return { id: manager.getSessionId(), cwd: source, sessionFile: session.sessionFile! };
+          return nativeProcesses.move(async () => {
+          assertSnapshotReady();
+          locationChanging = true;
+          try {
           await session.settings.flush(); await manager.flush();
           const saved = manager.captureState();
           const rescope = async (next: string) => {
@@ -1681,8 +1695,10 @@ export class OmpRuntime {
             catch (restoreError) { throw taskLocationOutcomeUnknown(`Native task location changed but rollback could not be verified: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`); }
             throw error;
           }
-          if (manager.getSessionId() !== handle.id || manager.getCwd() !== destination) throw taskLocationOutcomeUnknown("Native task identity or working directory changed unexpectedly.");
+          if (disposed || manager.getSessionId() !== handle.id || manager.getCwd() !== destination) throw taskLocationOutcomeUnknown("Native task identity or working directory changed unexpectedly.");
           return { id: manager.getSessionId(), cwd: destination, sessionFile: session.sessionFile! };
+          } finally { locationChanging = false; }
+          });
         },
         abort: async () => {
           assertSessionActive(); nativeTree.abort(); admissionAbort?.abort(); ui?.cancelAll("aborted"); mcp.cancelAuthorization();
@@ -1743,7 +1759,7 @@ export class OmpRuntime {
           const resetCleanupErrors: unknown[] = [];
           try { resetOwners?.beginClose(); } catch (error) { resetCleanupErrors.push(error); }
           usage.dispose();
-          const mcpDisposal = Promise.allSettled([mcpApps.dispose(), mcp.dispose(), htmlPreviews.dispose(), planExecution.dispose()]);
+          const mcpDisposal = Promise.allSettled([mcpApps.dispose(), mcp.dispose(), htmlPreviews.dispose(), planExecution.dispose(), nativeProcesses.dispose()]);
           btw.dispose();
           detachedQuestions.dispose();
           admissionAbort?.abort();

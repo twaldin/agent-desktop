@@ -193,6 +193,7 @@ const bridge: DesktopBridge = {
   getSessionUsage: (sessionId, hostId, mode, commandId) => ipcRenderer.invoke("host:session-usage", sessionId, hostId, mode, commandId),
   getExtensionUi: (sessionId, hostId) => ipcRenderer.invoke("host:extension-ui", sessionId, hostId),
   getSessionActivity: (sessionId, hostId) => ipcRenderer.invoke("host:session-activity", sessionId, hostId),
+  sessionProcesses: (sessionId, request, hostId) => ipcRenderer.invoke("host:session-processes", sessionId, request, hostId),
   sessionJobs: (sessionId, request, hostId) => ipcRenderer.invoke("host:session-jobs", sessionId, request, hostId),
   sessionSubagents: (sessionId, request, hostId) => ipcRenderer.invoke("host:session-subagents", sessionId, request, hostId),
   mcpOwner: { request: (hostId, request) => ipcRenderer.invoke("host:mcp-owner", hostId, request) },
@@ -245,6 +246,8 @@ contextBridge.exposeInMainWorld("agentDesktop", bridge);
 contextBridge.exposeInMainWorld("agentDesktopWindow", {
   initial: ipcRenderer.sendSync("desktop:window-state:read"),
   save: (state: unknown) => ipcRenderer.sendSync("desktop:window-state:save", state),
+  readProcessOperations: (scope: unknown) => ipcRenderer.sendSync("desktop:process-operations:read", scope),
+  saveProcessOperations: (scope: unknown, entries: unknown) => ipcRenderer.sendSync("desktop:process-operations:save", scope, entries),
   subscribe: (listener: (status: { error?: string }) => void) => {
     const receive = (_event: Electron.IpcRendererEvent, status: { error?: string }) => listener(status);
     ipcRenderer.on("desktop:window-state:status", receive);

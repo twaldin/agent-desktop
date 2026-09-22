@@ -518,6 +518,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   mutateGoal?(sessionId: string, request: import('./goal-control').GoalMutationRequest, hostId?: string): Promise<import('./goal-control').GoalMutationReceipt>;
   getExtensionUi?(sessionId: string, hostId?: string): Promise<import("./extension-ui").ExtensionUiResult | null>;
   getSessionActivity?(sessionId: string, hostId?: string): Promise<SessionActivitySnapshot | null>;
+  sessionProcesses?(sessionId: string, request: import("./session-processes").SessionProcessesRequest, hostId: string): Promise<import("./session-processes").SessionProcessesEnvelope>;
   sessionJobs?(sessionId: string, request: import("./session-jobs").SessionJobsRequest, hostId: string): Promise<import("./session-jobs").SessionJobsEnvelope>;
   sessionSubagents?(sessionId: string, request: import("./session-subagents").SessionSubagentsRequest, hostId: string): Promise<import("./session-subagents").SessionSubagentsEnvelope>;
   mcpOwner?: import("./mcp-owner").McpOwnerBridge;

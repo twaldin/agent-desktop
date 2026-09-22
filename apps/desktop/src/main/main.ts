@@ -1,3 +1,4 @@
+import { SessionProcessJournalStore } from "./session-process-journal";
 import { registerSessionTreeReadHandler } from "./session-tree-transport";
 import { registerTodoExternalEditorHandlers } from "./todo-external-editor-transport";
 import { sessionExportStatus, saveSessionExport } from "./session-export";
@@ -51,6 +52,8 @@ import { parseAutomationMutation, parseAutomationsQuery } from '../../../../pack
 import { requestComposerActions, requestComposerCompletions, requestSkillDetail, requestSkillInventory, requestSkillFile, requestSkillFileOpenOptions, requestSkillFileCopy, requestSkillImage } from "./composer-actions-transport";
 import { requestExtensionUi } from "./extension-ui-transport";
 import { requestSessionActivity } from "./session-activity-transport";
+import { requestSessionProcesses } from "./session-processes-transport";
+import { parseSessionProcessesRequest } from "../../../../packages/shared/src/session-processes";
 import { requestSessionJobs } from "./session-jobs-transport";
 import { parseSessionJobsRequest } from "../../../../packages/shared/src/session-jobs";
 import { requestSessionSubagents } from "./session-subagents-transport";
@@ -166,6 +169,7 @@ const windowCloseGate = new WindowCloseGate({
   },
 });
 const windowStates = new Map<number, WindowStateStore>();
+const processJournals = new Map<number, SessionProcessJournalStore>();
 let connection: LocalConnection | null = null;
 type HostStream = { endpoint: HostEndpoint; sequence: number; repositoryWatches: RepositoryWatchConnection; branchQueries: BranchQueryConnection; socket?: WebSocket; timer?: ReturnType<typeof setTimeout> };
 const streams = new Map<string, HostStream>();
@@ -632,6 +636,16 @@ ipcMain.handle("host:extension-ui", async (event, sessionId: string, hostId?: st
 });
 ipcMain.handle("host:session-activity", async (event, sessionId: string, hostId?: string) => {
   assertTrustedSender(event); return requestSessionActivity(await endpointFor(hostId), sessionId);
+});
+ipcMain.handle("host:session-processes", async (event, sessionId: string, input: unknown, hostId: string) => {
+  assertTrustedSender(event);
+  if ([sessionId, hostId].some(value => typeof value !== "string" || !value || value.length > 200 || /[\0\r\n]/.test(value)))
+    throw new Error("An explicit original host and conversation are required for native processes.");
+  const request = parseSessionProcessesRequest(input), endpoint = await endpointFor(hostId);
+  assertTrustedSender(event);
+  const result = await requestSessionProcesses(endpoint, sessionId, request);
+  assertTrustedSender(event);
+  return result;
 });
 ipcMain.handle("host:session-jobs", async (event, sessionId: string, input: unknown, hostId: string) => {
   assertTrustedSender(event);
@@ -1121,6 +1135,14 @@ ipcMain.on("desktop:window-state:save", (event, value: unknown) => {
   try { assertTrustedSender(event); event.returnValue = windowStates.get(event.sender.id)?.saveView(value) ?? { error: "Window layout storage is unavailable." }; }
   catch { event.returnValue = { error: "Window layout could not be saved." }; }
 });
+ipcMain.on("desktop:process-operations:read", (event, scope: unknown) => {
+  try { assertTrustedSender(event); event.returnValue = processJournals.get(event.sender.id)?.readProcessOperations(scope) ?? { error: "Process operation storage is unavailable." }; }
+  catch { event.returnValue = { error: "Process operation storage is unavailable." }; }
+});
+ipcMain.on("desktop:process-operations:save", (event, scope: unknown, entries: unknown) => {
+  try { assertTrustedSender(event); event.returnValue = processJournals.get(event.sender.id)?.saveProcessOperations(scope, entries) ?? { error: "Process operation storage is unavailable." }; }
+  catch { event.returnValue = { error: "Process operation metadata could not be saved." }; }
+});
 
 async function createWindow(): Promise<void> {
   // The application has one primary window. An additional window never writes
@@ -1137,6 +1159,7 @@ async function createWindow(): Promise<void> {
   });
   windows.add(window);
   windowStates.set(window.webContents.id, localState);
+  processJournals.set(window.webContents.id, new SessionProcessJournalStore(app.getPath("userData"), slot));
   const windowContentsId = window.webContents.id;
   window.webContents.on("did-finish-load", () => { if (!shuttingDown && !window.isDestroyed()) { repositoryWatchWindows.reset(windowContentsId); branchQueryWindows.reset(windowContentsId); } });
   workspaceImageEpochs.set(windowContentsId, 0);
@@ -1155,7 +1178,7 @@ async function createWindow(): Promise<void> {
   window.webContents.on("destroyed", () => { modifierWatches.cancel(windowContentsId); retireMcpAppDocument(windowContentsId); repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); notificationNavigation.unready(windowContentsId); });
   window.webContents.on("render-process-gone", (_event, details) => { modifierWatches.cancel(windowContentsId); retireMcpAppDocument(windowContentsId); repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); notificationNavigation.unready(windowContentsId); windowCloseGate.destroy(windowContentsId); workspaceImageEpochs.set(windowContentsId, (workspaceImageEpochs.get(windowContentsId) ?? 0) + 1); workspaceImages.releaseSender(windowContentsId); console.error("Desktop renderer exited:", details.reason); });
   window.on("close", event => { if (!windowCloseGate.handleWindowClose(windowContentsId, () => { if (!window.isDestroyed()) window.close(); })) event.preventDefault(); });
-  window.on("closed", () => { modifierWatches.cancel(windowContentsId); retireMcpAppDocument(windowContentsId); repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); windows.delete(window); windowStates.delete(windowContentsId); notificationNavigation.unready(windowContentsId); windowCloseGate.destroy(windowContentsId, true); workspaceImageEpochs.delete(windowContentsId); workspaceImages.releaseSender(windowContentsId); });
+  window.on("closed", () => { modifierWatches.cancel(windowContentsId); retireMcpAppDocument(windowContentsId); repositoryWatchWindows.releaseWindow(windowContentsId); branchQueryWindows.releaseWindow(windowContentsId); windows.delete(window); windowStates.delete(windowContentsId); processJournals.delete(windowContentsId); notificationNavigation.unready(windowContentsId); windowCloseGate.destroy(windowContentsId, true); workspaceImageEpochs.delete(windowContentsId); workspaceImages.releaseSender(windowContentsId); });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", event => event.preventDefault());
   const development = process.env.AGENT_DESKTOP_RENDERER_URL;

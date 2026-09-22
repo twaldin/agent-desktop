@@ -22,12 +22,13 @@ export interface EnvironmentCardProps {
   /** Native Todos panel for the selected conversation; omitted when no conversation is open. */
   todos?: { count: number; content: ReactNode };
   jobs?: { count?: number; content: ReactNode };
+  processes?: { count?: number; content: ReactNode };
   onOpenSubagents?(): void;
   /** Existing sessions never fall back to the global host picker while their host location is loading or unavailable. */
   taskLocation?: { snapshot: TaskLocationSnapshot; actions: TaskLocationActions } | { state: "loading" | "unavailable"; reason?: string };
 }
 
-export function EnvironmentCard({ hostName, cwd, local, connected, workspace, activity, activityError, sources, onReview, onCommit, onFiles, onTerminal, onHost, branchPrefix, onOpenGitSettings, onCheckoutBlocked, collapsedSections, onToggleSection, showEmptySources = false, actions, compoundGit, sideChats = [], todos, jobs, taskLocation, onOpenSubagents }: EnvironmentCardProps) {
+export function EnvironmentCard({ hostName, cwd, local, connected, workspace, activity, activityError, sources, onReview, onCommit, onFiles, onTerminal, onHost, branchPrefix, onOpenGitSettings, onCheckoutBlocked, collapsedSections, onToggleSection, showEmptySources = false, actions, compoundGit, sideChats = [], todos, jobs, processes, taskLocation, onOpenSubagents }: EnvironmentCardProps) {
   const [, redraw] = useReducer(value => value + 1, 0);
   const [expandedSources, setExpandedSources] = useState(false);
   useEffect(() => workspace.subscribe(redraw), [workspace]);
@@ -55,6 +56,7 @@ export function EnvironmentCard({ hostName, cwd, local, connected, workspace, ac
     {todos && <SummarySection {...section("todos")} title="Todos" count={todos.count}>{todos.content}</SummarySection>}
     <NativeActivity activity={activity} error={activityError} collapsedSections={collapsedSections} onToggleSection={onToggleSection} onOpenSubagents={onOpenSubagents}/>
     {jobs && <SummarySection {...section("jobs")} title="Jobs" count={jobs.count}>{jobs.content}</SummarySection>}
+    {processes && <SummarySection {...section("processes")} title="Processes" count={processes.count}>{processes.content}</SummarySection>}
     {(sources.length > 0 || showEmptySources) && <SummarySection {...section("sources")} title="Sources" count={sources.length} actions={<button type="button" className="icon-button" aria-label="Browse source files" title="Browse files" onClick={onFiles}><Icon name="plus"/></button>}>
       {shownSources.length ? <ul className="environment-sources">{shownSources.map(source => <li key={source.id}><button onClick={source.onOpen} title={source.label}><Icon name={source.kind === "image" ? "compose" : "folder"}/><span>{source.label}</span></button></li>)}</ul> : <p className="environment-note">No consumed sources are available.</p>}
       {sources.length > 3 && <button className="environment-link" onClick={() => setExpandedSources(value => !value)}>{expandedSources ? "Show less" : "View all"}</button>}
