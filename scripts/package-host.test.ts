@@ -6,12 +6,15 @@ import { dirname, join } from "node:path";
 import { TMUX_BUNDLE_SOURCES } from "../apps/host/src/terminals/bundle";
 import { unpackHostArtifact, verifyArtifact } from "./install-host";
 import { assertHostRuntimePins, packageHost, type HostArtifact } from "./package-host";
+import { HostStore } from "../apps/host/src/store";
+import { checkHostStateCompatibility } from "./host-state-compatibility";
+import { Database } from "bun:sqlite";
 
 const directories: string[] = [];
 const hash = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 
-test("new package declares schema1 through 26 and hashes the standalone guard; immutable output cannot be overwritten", async () => {
+test("new package admits current Goal state, rejects future state and hashes the guard; immutable output cannot be overwritten", async () => {
   const root = await mkdtemp(join(tmpdir(), "agent-package-schema-contract-")); directories.push(root);
   const repository = join(root, "repository"), native = join(root, "native-contract-fixture");
   for (const [file, value] of Object.entries({
@@ -40,7 +43,16 @@ test("new package declares schema1 through 26 and hashes the standalone guard; i
   await unpackHostArtifact(output, unpacked);
   expect(Bun.spawnSync(["tar", "-xzf", output, "-C", unpacked], { stdout: "pipe", stderr: "pipe" }).success).toBe(true);
   const manifest = JSON.parse(await readFile(join(unpacked, "host-artifact.json"), "utf8")) as HostArtifact;
-  expect(manifest.stateSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]);
+  const stateRoot = join(root, "goal-state"), store = new HostStore(stateRoot);
+  try {
+    store.putDraft({ id: "goal-draft", text: "Keep this objective", projectId: null, model: null, goal: { tokenBudget: "1200" } }, 0);
+    expect(checkHostStateCompatibility(manifest, stateRoot).checkedSchemaVersion).toBe(27);
+    expect(store.getDraft("goal-draft")?.goal).toEqual({ tokenBudget: "1200" });
+  } finally { store.close(); }
+  const future = new Database(join(stateRoot, "state.sqlite"));
+  try { future.exec("PRAGMA user_version = 28"); } finally { future.close(); }
+  expect(() => checkHostStateCompatibility(manifest, stateRoot)).toThrow("schema 28");
+  expect(manifest.stateSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]);
   expect(manifest.files["scripts/host-state-compatibility.ts"]).toBe(hash(await readFile(join(repository, "scripts/host-state-compatibility.ts"))));
   expect(manifest.files["scripts/restore-pinned-omp-cli-mode.ts"]).toBe(hash(await readFile(join(repository, "scripts/restore-pinned-omp-cli-mode.ts"))));
   expect(manifest.files["patches/@oh-my-pi%2Fpi-coding-agent@18.1.10.patch"]).toBe(hash(ompPatch));

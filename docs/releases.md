@@ -12,6 +12,8 @@ Those native build jobs are gated by `ENABLE_NATIVE_RELEASE_BUILDS=true`, explic
 
 Successful native builds include the desktop ZIP, host archive, build commit metadata and SHA256SUMS. Source archives have separate SOURCE-SHA256SUMS. The desktop is ad-hoc signed, not notarized. Packaging does not constitute physical-device, provider, native-browser, visual parity or full-GOAL acceptance. See [status](status.md).
 
+Host artifacts declare support through state schema 27, including existing Goal drafts. The installer keeps its strict compatibility guard: unknown newer state is refused without downgrade or restore. Older immutable artifacts retain their original declarations; publishing a correction does not rewrite them.
+
 ## Current named milestone
 
 [v0.1.0-alpha.2](https://github.com/twaldin/agent-desktop/releases/tag/v0.1.0-alpha.2) points to `9208455`. Both platform suites, desktop/host packaging and packaged startup checks passed. The earlier failed `v0.1.0-alpha.1` remains unchanged.
