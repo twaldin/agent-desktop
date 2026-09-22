@@ -27,8 +27,8 @@ const bounded = (value: unknown, limit = 4096) => typeof value === "string" ? va
 
 /** These reviewed native text handlers neither change the owned native identity
  * nor require a TUI controller. Others remain visible with a concrete gap. */
-const supportedBuiltins = new Set(["force", "model", "switch", "fast", "skillful", "computer", "prewalk", "rename", "jobs", "tools", "context", "changelog", "dump", "compact", "shake", "retry", "fresh"]);
-const identityCommands = new Set(["new", "fresh", "clear", "drop", "handoff", "resume", "branch", "fork", "tree", "move", "wt", "quit", "join", "leave"]);
+const supportedBuiltins = new Set(["force", "model", "switch", "fast", "skillful", "computer", "prewalk", "rename", "jobs", "tools", "context", "changelog", "dump", "compact", "shake", "handoff", "retry", "fresh"]);
+const identityCommands = new Set(["new", "fresh", "clear", "drop", "resume", "branch", "fork", "tree", "move", "wt", "quit", "join", "leave"]);
 export function builtinAvailability(name: string, args?: string): { availability: ComposerAvailability; reason?: string } {
   if (name === "tree") return { availability: "executable" };
   if (name === "export") return { availability: "executable" };

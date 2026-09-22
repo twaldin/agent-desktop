@@ -73,6 +73,22 @@ test("native context maintenance exposes every headless compact and shake mode",
   }
 });
 
+test("native handoff is executable only while extension and custom precedence leave it in control", () => {
+  const session = { mcpPromptCommands: [], customCommands: [], slashCommands: [], promptTemplates: [], skills: [], skillWarnings: [],
+    sessionManager: { getCwd: () => "/fixture" } } as unknown as AgentSession;
+  const availability = (extensions: Extension[] = []) => sessionComposerActions(session, extensions).commands.find(row => row.id === "builtin:handoff")?.availability;
+  expect(availability()).toBe("executable");
+  const extension = { resolvedPath: "/fixture/handoff.ts", commands: new Map([
+    ["handoff", { name: "handoff", description: "Extension handoff", handler: async () => {} }],
+  ]) } as unknown as Extension;
+  expect(availability([extension])).toBe("shadowed");
+  Object.assign(session, { customCommands: [{ resolvedPath: "/fixture/custom.ts", source: "project",
+    command: { name: "handoff", description: "Custom handoff", execute: async () => undefined } }] });
+  expect(availability()).toBe("shadowed");
+  for (const name of ["new", "clear", "resume", "move", "quit"])
+    expect(builtinAvailability(name).availability).toBe("pending");
+});
+
 test("the session catalog exposes native pin without admitting native deletion", () => {
   const session = { mcpPromptCommands: [], customCommands: [], slashCommands: [], promptTemplates: [], skills: [], skillWarnings: [],
     sessionManager: { getCwd: () => "/fixture" } } as unknown as AgentSession;

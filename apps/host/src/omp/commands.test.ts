@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
-import type { AgentSession } from "@oh-my-pi/pi-coding-agent";
+import { SessionManager, type AgentSession } from "@oh-my-pi/pi-coding-agent";
+import { USER_INTERRUPT_LABEL } from "@oh-my-pi/pi-coding-agent/session/messages";
 import type { NativeMcpAuthorizationSnapshot, NativeSessionMcpSnapshot } from "@agent-desktop/shared";
 import { builtinAvailability } from "./composer-actions";
 import { dispatchNativePrompt, type NativeCommandBridges } from "./commands";
-import { OmpPromptAdmissionError } from "./prompt";
+import { beginNativePrompt, OmpPromptAdmissionError } from "./prompt";
 import type { SessionTodos, TodoMutationResult } from "../../../../packages/shared/src/session-todos";
 
 function mcp(status: NativeMcpAuthorizationSnapshot["status"], options: Partial<NativeMcpAuthorizationSnapshot> = {}): NativeMcpAuthorizationSnapshot {
@@ -300,4 +301,146 @@ test("usage extension ownership precedes the reset fence and malformed native sy
     sessionManager: { ...value.session.sessionManager, getUsageStatistics: () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, orchestrationInput: 0, orchestrationOutput: 0, orchestrationCacheRead: 0, premiumRequests: 0, cost: 0 }) } });
   const invalid = await dispatchNativePrompt(value.session, "/usage show extra", undefined, undefined, value.bridges);
   expect(invalid.output).toBe("Usage: /usage [show|reset [account|active]]");
+});
+
+// The registry/parser/headless handler, admission receipt and in-memory journal
+// are real. Only AgentSession.handoff is controlled: these are not provider or
+// native compaction proofs, and do not replace the owning App/worker acceptance.
+function handoffFixture(perform: AgentSession["handoff"]) {
+  const manager = SessionManager.inMemory("/fixture");
+  manager.appendMessage({ role: "user", content: "Original session history", timestamp: 1 });
+  let calls = 0;
+  const session = {
+    customCommands: [], slashCommands: [], promptTemplates: [],
+    isStreaming: false, isGeneratingHandoff: false, isCompacting: false, isAborting: false,
+    settings: {}, sessionManager: manager,
+    prompt: async () => { throw new Error("Builtin handoff must not enter the ordinary model prompt"); },
+    handoff: async (...args: Parameters<AgentSession["handoff"]>) => { calls++; return perform(...args); },
+  } as unknown as AgentSession;
+  return { session, manager, calls: () => calls };
+}
+
+test("handoff awaits the pinned headless handler and persistence before acknowledging the original session", async () => {
+  const started = Promise.withResolvers<void>(), generated = Promise.withResolvers<Awaited<ReturnType<AgentSession["handoff"]>>>();
+  const persisting = Promise.withResolvers<void>(), persisted = Promise.withResolvers<void>();
+  const value = handoffFixture(async focus => {
+    expect(focus).toBe("Keep the unresolved migration\nand ownership constraints");
+    started.resolve(); return generated.promise;
+  });
+  const originalId = value.manager.getSessionId(), originalLeaf = value.manager.getBranch()[0]!.id;
+  const run = beginNativePrompt(value.manager,
+    () => dispatchNativePrompt(value.session, "/handoff Keep the unresolved migration\nand ownership constraints"),
+    async () => { persisting.resolve(); await persisted.promise; });
+  let accepted = false;
+  void run.accepted.then(() => { accepted = true; });
+  await started.promise;
+  expect(accepted).toBe(false);
+  generated.resolve({ document: "Controlled handoff boundary", savedPath: "/must-not-be-advertised.md" });
+  await persisting.promise;
+  expect(accepted).toBe(false);
+  persisted.resolve();
+  const receipt = await run.accepted;
+  expect(receipt).toMatchObject({ kind: "native-command", command: "handoff", output: expect.stringMatching(/compacted in place/i) });
+  expect(await run.completion).toBe(false);
+  expect(value.calls()).toBe(1);
+  expect(value.manager.getSessionId()).toBe(originalId);
+  const branch = value.manager.getBranch();
+  expect(branch[0]?.id).toEqual(originalLeaf);
+  const output = branch.at(-1);
+  expect(output).toMatchObject({ type: "custom", customType: "agent-desktop.command-output", data: { command: "handoff" } });
+  expect(JSON.stringify(output)).not.toContain("must-not-be-advertised");
+  expect(receipt && "entryId" in receipt ? receipt.entryId : undefined).toBe(output?.id);
+});
+
+test("handoff retains native streaming and duplicate-generation refusal without entering generation", async () => {
+  for (const [flag, reason] of [
+    ["isStreaming", /current response/i],
+    ["isGeneratingHandoff", /already in progress/i],
+  ] as const) {
+    const value = handoffFixture(async () => { throw new Error("Refusal must precede generation"); });
+    Object.assign(value.session, { [flag]: true });
+    const result = await dispatchNativePrompt(value.session, "/handoff");
+    expect(result).toMatchObject({ handledCommand: "handoff", agentInvoked: false, output: expect.stringMatching(reason) });
+    expect(value.calls()).toBe(0);
+    expect(value.manager.getBranch().some(entry => entry.type === "compaction")).toBe(false);
+  }
+});
+
+test("handoff cannot cross settling maintenance, abort or slash-image admission fences", async () => {
+  const value = handoffFixture(async () => { throw new Error("Admission fence must precede generation"); });
+  const before = value.manager.getBranch();
+  for (const flag of ["isCompacting", "isAborting"]) {
+    Object.assign(value.session, { [flag]: true });
+    await expect(dispatchNativePrompt(value.session, "/handoff")).rejects.toThrow("maintenance");
+    Object.assign(value.session, { [flag]: false });
+  }
+  await expect(dispatchNativePrompt(value.session, "/handoff", [{ type: "image", data: "AA==", mimeType: "image/png" }])).rejects.toThrow("Image attachments");
+  expect(value.calls()).toBe(0);
+  expect(value.manager.getBranch()).toEqual(before);
+});
+
+test("handoff preserves exact extension then custom ownership before the native builtin", async () => {
+  const value = handoffFixture(async () => { throw new Error("Shadowed builtin must not run"); });
+  const owners: string[] = [];
+  let extensionLoaded = true;
+  const extension = { handler: async () => { owners.push("extension"); } };
+  Object.assign(value.session, {
+    extensionRunner: {
+      getCommand: (name: string) => extensionLoaded && name === "handoff" ? extension : undefined,
+      createCommandContext: () => ({}), runScoped: async (run: () => Promise<void>) => run(),
+      emitError: () => { throw new Error("Unexpected extension failure"); },
+    },
+    customCommands: [{ command: { name: "handoff", execute: async () => { owners.push("custom"); } } }],
+  });
+  const before = value.manager.getBranch();
+  await dispatchNativePrompt(value.session, "/handoff focus");
+  expect(owners).toEqual(["extension"]);
+  extensionLoaded = false;
+  await dispatchNativePrompt(value.session, "/handoff focus");
+  expect(owners).toEqual(["extension", "custom"]);
+  expect(value.calls()).toBe(0);
+  expect(value.manager.getBranch()).toEqual(before);
+});
+
+test("handoff reports native failure and cancellation without claiming successful compaction", async () => {
+  for (const [perform, outcome] of [
+    [async () => { throw new Error("Controlled provider failure"); }, /failed: Controlled provider failure/i],
+    [async () => { throw new Error("Handoff cancelled"); }, /cancelled/i],
+    [async () => undefined, /cancelled/i],
+  ] satisfies Array<[AgentSession["handoff"], RegExp]>) {
+    const value = handoffFixture(perform);
+    const result = await dispatchNativePrompt(value.session, "/handoff");
+    expect(result).toMatchObject({ handledCommand: "handoff", agentInvoked: false });
+    expect(result.output).toMatch(outcome);
+    expect(result.output).not.toMatch(/compacted in place/i);
+    expect(value.manager.getBranch().at(-1)).toMatchObject({
+      type: "custom", customType: "agent-desktop.command-output", data: { output: expect.stringMatching(outcome) },
+    });
+    expect(value.manager.getBranch().some(entry => entry.type === "compaction")).toBe(false);
+  }
+});
+
+test("handoff awaits an interrupted generation and honors the native silent user-interrupt label", async () => {
+  const started = Promise.withResolvers<void>(), interrupted = Promise.withResolvers<never>();
+  const value = handoffFixture(async () => { started.resolve(); return interrupted.promise; });
+  const before = value.manager.getBranch();
+  const pending = dispatchNativePrompt(value.session, "/handoff");
+  await started.promise;
+  interrupted.reject(new Error(USER_INTERRUPT_LABEL));
+  expect(await pending).toEqual({ agentInvoked: false, handledCommand: "handoff" });
+  expect(value.calls()).toBe(1);
+  expect(value.manager.getBranch()).toEqual(before);
+});
+
+test("handoff persistence failure is unknown admission and never re-invokes generation", async () => {
+  const value = handoffFixture(async () => ({ document: "Controlled handoff boundary" }));
+  const originalId = value.manager.getSessionId();
+  const run = beginNativePrompt(value.manager, () => dispatchNativePrompt(value.session, "/handoff"), async () => {
+    throw new Error("Controlled persistence failure after handler completion");
+  });
+  await expect(run.accepted).rejects.toBeInstanceOf(OmpPromptAdmissionError);
+  await expect(run.completion).rejects.toThrow("Controlled persistence failure");
+  expect(value.calls()).toBe(1);
+  expect(value.manager.getSessionId()).toBe(originalId);
+  expect(value.manager.getBranch().at(-1)).toMatchObject({ type: "custom", customType: "agent-desktop.command-output" });
 });
