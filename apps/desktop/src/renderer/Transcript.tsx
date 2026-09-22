@@ -62,6 +62,10 @@ export function TranscriptItem({ message, connected, disclosures, calls, linkedC
   if (message.role === "selectedText" && message.selectedText) return <section className="transcript-selected-context" data-message-id={message.id} data-native-id={message.nativeId} aria-label="Saved selected text">
     <ComposerSelectedText attachments={message.selectedText.attachments}/><span className="transcript-selected-context-status">Saved context · prompt not linked</span>
   </section>;
+  if (message.backgroundJobs?.length) return <section className="transcript-background-jobs" data-message-id={message.id} data-native-id={message.nativeId} aria-label="Background job results">
+    <ul>{message.backgroundJobs.map((job, index) => <li key={index}><Icon name="check"/><span>Background job completed</span><span className="transcript-job-kind">[{job.type}]</span><code>{job.jobId}</code>{job.duration && <span className="transcript-job-duration">({job.duration})</span>}</li>)}</ul>
+    <Disclosure state={disclosures} stateKey={`${message.id}:background-result`} label="Result" variant="thinking">{blocks.map(renderBlock)}</Disclosure>
+  </section>;
   const user = message.role === "user", assistant = message.role === "assistant";
   if (!user && !assistant) return <section className="transcript-native-message" data-message-id={message.id} aria-label={`Native ${message.role} message`}><div className="transcript-native-role">{message.role === "branchSummary" ? "Branch summary" : message.role === "compactionSummary" ? "Conversation summary" : message.role}</div>{blocks.map(renderBlock)}{message.nativeSummary?.warning && <p className="subtle-notice">{message.nativeSummary.warning}</p>}{message.nativeSummary && <details><summary>Summary details</summary><pre>{JSON.stringify(message.nativeSummary, null, 2)}</pre></details>}{!blocks.length && <p className="subtle-notice">No displayable content was supplied for this native message.</p>}</section>;
   const metadata = message.assistant, complete = message.lifecycle === "complete", goalCompletion = assistant ? message.goalCompletion : undefined;

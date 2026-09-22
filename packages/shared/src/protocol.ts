@@ -235,6 +235,8 @@ export interface TranscriptMessage {
   mcpArtifactError?: string;
   tool?: { callId: string; name?: string; status?: "running" | "completed"; isError?: boolean; arguments?: Record<string, unknown>; intent?: string; output?: TranscriptToolOutput };
   assistant?: TranscriptAssistantMetadata;
+  /** Recorded OMP completion notices, not current job state or action authority. */
+  backgroundJobs?: Array<{ jobId: string; type: "bash" | "task" | "eval" | "job"; duration?: string }>;
   /** Native summary display metadata; never provider replay payloads. */
   nativeSummary?: { fromId?: string; method?: string; shortSummary?: string; warning?: string; tokensBefore?: number; tokensAfter?: number; imageCount?: number };
   /** App-owned native command output entry. This is never a model message. */
