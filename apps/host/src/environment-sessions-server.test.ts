@@ -110,14 +110,16 @@ test('authenticated create/resume/reopen/cleanup use actual Git, sourced setup a
             expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ outcome: 'accepted' });
           }
         }
+        // printf can expose its first newline before writing the second value.
+        const expectedOutput = `${expected}\n${'sessionId' in target ? session.cwd : 'unset'}\n`;
         const deadline = Date.now() + 8_000;
         let actual = '';
         while (Date.now() < deadline) {
           actual = await readFile(join(cwd, filename), 'utf8').catch(() => '');
-          if (actual.endsWith('\n')) break;
+          if (actual === expectedOutput) break;
           await Bun.sleep(25);
         }
-        expect(actual).toBe(`${expected}\n${'sessionId' in target ? session.cwd : 'unset'}\n`);
+        expect(actual).toBe(expectedOutput);
       } finally { await action({ type: 'close', terminalId: created.terminal.id }); await rm(join(cwd, filename), { force: true }); }
     };
     for (const version of terminalVersions) {

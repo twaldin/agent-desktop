@@ -5,6 +5,7 @@ import { DraftController } from "./drafts";
 import { errorMessage } from "./desktop-state";
 import { actionError, clearRecoveredForceError, type ActionError } from "./action-error";
 import { usageResetArgument } from "./usage-reset-command";
+import { goalComposerCommand } from "./goal-composer";
 
 const app = readFileSync(process.env.FORCE_ACTION_ERROR_APP ?? new URL("./App.tsx", import.meta.url), "utf8");
 function extractedReport(values: Record<string, unknown>): (cause: unknown, draftId: string, commandId?: string) => void {
@@ -123,7 +124,7 @@ test("actual App pre-submit btw failure cannot acquire an older partial force co
   const newer = pending.draft;
   const usageOwner = usageOwnerFixture(owner.hostId);
   await appSubmit({
-    canSend: true, submitting: { current: false }, setBusy() {}, setActionError, reportSubmissionError, usageResetArgument,
+    canSend: true, submitting: { current: false }, setBusy() {}, setActionError, reportSubmissionError, usageResetArgument, goalComposerCommand,
     draftId: original.id, selectedRef: { current: `${owner.hostId}:${owner.sessionId}` }, hostId: owner.hostId,
     submissions, drafts: { async prepareSubmission() { return newer; }, finishSubmission() {}, get() { return { draft: newer }; } },
     hasDraftContent: () => true, hasRemoteExecution: () => false, nativeBtwQuestion: () => "later question",
@@ -161,7 +162,7 @@ test("actual App binds fresh force and uncertain retry only when the emitted com
     const reportSubmissionError = extractedReport({ submissions, errorMessage, setActionErrorState, ownedActionError: actionError, hostId: owner.hostId, setActionError });
     const usageOwner = usageOwnerFixture(owner.hostId);
     await appSubmit({
-      canSend: true, submitting: { current: false }, setBusy() {}, setActionError, reportSubmissionError, usageResetArgument,
+      canSend: true, submitting: { current: false }, setBusy() {}, setActionError, reportSubmissionError, usageResetArgument, goalComposerCommand,
       draftId: original.id, selectedRef: { current: `${owner.hostId}:${owner.sessionId}` }, hostId: owner.hostId,
       submissions, drafts: { async prepareSubmission() { return forceDraft; }, beginPendingSubmission() {}, finishSubmission() {}, get() { return { draft: forceDraft }; } },
       hasDraftContent: () => true, hasRemoteExecution: () => false, nativeBtwQuestion: () => undefined,
