@@ -18,6 +18,8 @@ export interface NativeSessionTreePorts {
   assertOwner(): void;
   getBusyReason(): string | undefined;
   prepare(): Promise<void>;
+  /** Rebind provider-identity-derived owners after native context reset, including partial failure. */
+  onProviderSessionChanged?(): void;
   ui?: OmpInteractionBridge;
   /** Synchronously replace the old display mirror and publish a history-change event before native continuation. */
   onChanged(): void;
@@ -113,7 +115,7 @@ export class NativeSessionTree {
     });
     let recoveredDraft: SessionTree["recoveredDraft"];
     for (const entry of this.manager.getBranch()) {
-      if (entry.type === "message" && entry.message.role === "user") recoveredDraft = undefined;
+      if (entry.type === "reset_boundary" || entry.type === "message" && entry.message.role === "user") recoveredDraft = undefined;
       if (entry.type === "custom" && entry.customType === TREE_NAVIGATION_ENTRY) {
         const data = entry.data as { commandId?: unknown; targetId?: unknown; draft?: unknown } | undefined;
         recoveredDraft = undefined;
@@ -133,7 +135,7 @@ export class NativeSessionTree {
       const current = this.read();
       if (current.busyReason) throw rejected(current.busyReason);
       if (JSON.stringify(request.ticket) !== JSON.stringify(current.ticket)) throw rejected("The native history changed. Refresh before navigating.");
-      if (!this.manager.getEntry(request.mutation.targetId)) throw rejected("The selected history entry no longer exists.");
+      if (request.mutation.action !== "reset-context" && !this.manager.getEntry(request.mutation.targetId)) throw rejected("The selected history entry no longer exists.");
       const abort = this.#abort = new AbortController();
       const historyRevision = this.#historyRevision();
       const operation = Promise.resolve().then(() => this.#run(commandId, request, current, abort, historyRevision));
@@ -149,9 +151,35 @@ export class NativeSessionTree {
       if (this.#revision() !== before.ticket.revision) throw rejected("Native history changed during navigation preparation.");
     };
     const unchanged = () => this.#historyRevision() === historyRevision;
+    let contextResetStarted = false;
     try {
       await this.ports.prepare(); assertCurrent();
       const mutation = request.mutation;
+      if (mutation.action === "reset-context") {
+        const busyReason = this.ports.getBusyReason();
+        if (busyReason) throw rejected(busyReason);
+        if (!this.ports.onProviderSessionChanged) throw rejected("The native context-reset owner is unavailable.");
+        if (mutation.origin === "clear-command" && (lookupBuiltinSlashCommand("clear")?.name !== "clear"
+          || this.session.extensionRunner?.getCommand("clear")
+          || this.session.customCommands.some(command => command.command.name === "clear")))
+          throw rejected("The native /clear command no longer owns this input. Nothing was reset.");
+        const providerSessionId = this.session.sessionId;
+        contextResetStarted = true;
+        let result;
+        try { result = await this.session.resetSessionContext(); }
+        finally {
+          if (this.session.sessionId !== providerSessionId) this.ports.onProviderSessionChanged();
+        }
+        if (!result) {
+          // The pinned API returns undefined only before changing native state.
+          contextResetStarted = false;
+          throw rejected("Wait for the current response or foreground execution to finish before clearing context.");
+        }
+        this.#assert();
+        await this.manager.flush(); this.#assert();
+        this.ports.onChanged();
+        return { commandId, state: this.read(false), cancelled: false };
+      }
       if (mutation.action === "label") {
         this.manager.appendLabelChange(mutation.targetId, mutation.label ?? undefined);
         await this.manager.flush(); this.#assert();
@@ -202,9 +230,12 @@ export class NativeSessionTree {
       if (result.askReanswerCommitted && !abort.signal.aborted) this.session.resumeAfterAskReanswer();
       return { commandId, state, cancelled: false, ...(draft ? { draft } : {}), ...(result.askReanswerCommitted ? { askReanswerCommitted: true } : {}) };
     } catch (cause) {
-      if (!unchanged()) {
-        this.#unknown = true; this.ports.onChanged();
-        throw new NativeTreeError("OUTCOME_UNKNOWN", "Native history may have changed, but its outcome could not be confirmed. Inspect the original history; do not replay this command.", { cause });
+      if (contextResetStarted || !unchanged()) {
+        this.#unknown = true;
+        let failure = cause;
+        try { this.ports.onChanged(); }
+        catch (error) { failure = new AggregateError([cause, error], "Native history change and display refresh could not be confirmed."); }
+        throw new NativeTreeError("OUTCOME_UNKNOWN", "Native context or history may have changed, but its outcome could not be confirmed. Inspect the original history; do not replay this command.", { cause: failure });
       }
       throw cause instanceof NativeTreeError ? cause : new NativeTreeError("TREE_REJECTED", cause instanceof Error ? cause.message : String(cause), { cause });
     }

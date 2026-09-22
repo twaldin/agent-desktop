@@ -4,8 +4,9 @@ import { hasSessionForkIntent } from "../../../../packages/shared/src/session-fo
 import { HostRequestError } from "./host-transport";
 
 /** Old hosts normalize away unknown fields. Never downgrade a policy request. */
-export function commandEndpoint(envelope: CommandEnvelope): "/v1/commands" | "/v2/commands" | "/v3/commands" | "/v4/commands" | "/v5/commands" | "/v6/commands" | "/v7/commands" | "/v8/commands" | "/v9/commands" | "/v10/commands" | "/v11/commands" | "/v12/commands" | "/v13/commands" | "/v14/commands" | "/v15/commands" | "/v16/commands" | "/v17/commands" | "/v18/commands" | "/v19/commands" | "/v20/commands" | "/v22/commands" | "/v23/commands" | "/v24/commands" {
+export function commandEndpoint(envelope: CommandEnvelope): "/v1/commands" | "/v2/commands" | "/v3/commands" | "/v4/commands" | "/v5/commands" | "/v6/commands" | "/v7/commands" | "/v8/commands" | "/v9/commands" | "/v10/commands" | "/v11/commands" | "/v12/commands" | "/v13/commands" | "/v14/commands" | "/v15/commands" | "/v16/commands" | "/v17/commands" | "/v18/commands" | "/v19/commands" | "/v20/commands" | "/v22/commands" | "/v23/commands" | "/v24/commands" | "/v25/commands" {
   const command = envelope.command;
+  if (envelope.commandVersion === 25 || command.type === "session.tree.mutate" && command.mutation.action === "reset-context") return "/v25/commands";
   if (envelope.commandVersion === 24 || command.type === "draft.put" && command.draft.goal !== undefined || command.type === "session.prompt" && command.goal !== undefined) return "/v24/commands";
   if (envelope.commandVersion === 23 || command.type === "session.tree.mutate" || command.type === "session.prompt" && command.treeTicket !== undefined) return "/v23/commands";
   if (envelope.commandVersion === 22 || command.type === "session.todos.mutate") return "/v22/commands";
@@ -44,6 +45,7 @@ export async function requestVersionedCommand(request: (path: string, body: unkn
   const endpoint = commandEndpoint(envelope);
   try { return await request(endpoint, envelope); }
   catch (error) {
+    if (endpoint === "/v25/commands" && error instanceof HostRequestError && error.status === 404 && !error.code) return {ok:false,commandId:envelope.id,error:{code:"TREE_RESET_PROTOCOL_UNSUPPORTED",message:"Update the owning host to clear active context. This request was not accepted; saved history was retained."}} satisfies CommandResult;
     if (endpoint === "/v24/commands" && error instanceof HostRequestError && error.status === 404 && !error.code) return {ok:false,commandId:envelope.id,error:{code:"GOAL_COMPOSER_PROTOCOL_UNSUPPORTED",message:"Update the owning host to retain and submit Goal composer intent. The draft was retained; this request was not accepted."}} satisfies CommandResult;
     if (endpoint === "/v23/commands" && error instanceof HostRequestError && error.status === 404 && !error.code) return {ok:false,commandId:envelope.id,error:{code:"TREE_PROTOCOL_UNSUPPORTED",message:"Update the owning host to navigate conversation history. This request was not accepted."}} satisfies CommandResult;
     if (endpoint === "/v22/commands" && error instanceof HostRequestError && error.status === 404 && !error.code) return {ok:false,commandId:envelope.id,error:{code:"TODOS_PROTOCOL_UNSUPPORTED",message:"Update the owning host to read or change native Todos. This request was not accepted."}} satisfies CommandResult;

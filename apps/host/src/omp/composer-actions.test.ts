@@ -85,7 +85,7 @@ test("native handoff is executable only while extension and custom precedence le
   Object.assign(session, { customCommands: [{ resolvedPath: "/fixture/custom.ts", source: "project",
     command: { name: "handoff", description: "Custom handoff", execute: async () => undefined } }] });
   expect(availability()).toBe("shadowed");
-  for (const name of ["new", "clear", "resume", "move", "quit"])
+  for (const name of ["new", "resume", "move", "quit"])
     expect(builtinAvailability(name).availability).toBe("pending");
 });
 
@@ -125,4 +125,19 @@ test("native plugin maintenance exposes reload and explicit plugin mutations onl
   const shadowed = sessionComposerActions(session, [extension]);
   expect(shadowed.commands.find(row => row.id === "builtin:plugins")?.availability).toBe("shadowed");
   expect(shadowed.commands.find(row => row.id === "builtin:reload-plugins")?.availability).toBe("shadowed");
+});
+
+
+test("clear context uses a dedicated confirmation action and preserves native command shadowing", () => {
+  const session = { mcpPromptCommands: [], customCommands: [], slashCommands: [], promptTemplates: [], skills: [], skillWarnings: [],
+    sessionManager: { getCwd: () => "/fixture" } } as unknown as AgentSession;
+  const row = () => sessionComposerActions(session, []).commands.find(command => command.id === "builtin:clear");
+  expect(row()).toMatchObject({ availability: "partial", desktopAction: "clear-context" });
+  const extension = { resolvedPath: "/fixture/clear.ts", commands: new Map([
+    ["clear", { name: "clear", description: "Extension command", handler: async () => {} }],
+  ]) } as unknown as Extension;
+  expect(sessionComposerActions(session, [extension]).commands.find(command => command.id === "builtin:clear")?.availability).toBe("shadowed");
+  Object.assign(session, { customCommands: [{ resolvedPath: "/fixture/custom-clear.ts", source: "project",
+    command: { name: "clear", description: "Custom command", execute: async () => undefined } }] });
+  expect(row()?.availability).toBe("shadowed");
 });

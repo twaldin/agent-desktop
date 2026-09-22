@@ -1,7 +1,7 @@
 import { GoalComposerIntent } from "./GoalComposerIntent";
 import { goalBudgetIssue, goalComposerCommand } from "./goal-composer";
 import { ExtensionStatuses, ExtensionWidgets, useExtensionSessionUi } from "./ExtensionSessionUi";
-import { SessionTreeHistory, SessionTreeEdit } from "./SessionTree";
+import { SessionTreeHistory, SessionTreeEdit, SessionTreeResetContext } from "./SessionTree";
 import { useSessionTree, type SessionTreePorts } from "./use-session-tree";
 import { parseSessionTreeResponse, type TreeMutationResult, type TreeTicket } from "../../../../packages/shared/src/session-tree";
 import type { TodoEditorPorts } from "./todo-external-editor-state";
@@ -10,6 +10,7 @@ import { SessionUsagePanel } from "./SessionUsagePanel";
 import { SessionUsageState } from "./session-usage-state";
 import { usageResetArgument, nativeUsageResetWinner } from "./usage-reset-command";
 import { sameDraftContent } from "./drafts";
+import { ContextResetConfirmation, type ContextResetSource } from "./context-reset-confirmation";
 import type { PlanEditorPorts } from "./plan-external-editor-state";
 import { PlanExecutionContinuationControl, PlanReviewPanel } from "./PlanReviewPanel";
 import { useSessionPlan, type SessionPlanPorts } from "./use-session-plan";
@@ -1042,10 +1043,72 @@ export function App() {
   const nativeTree = useSessionTree({ hostId, sessionId: selected?.id ?? "" }, treePorts, {
     connected: connected && !selected?.archived, active: !contentOverlayOpen,
     supported: state?.tree?.version === 1 && state.tree.commandVersion === 23, localHostId: desktop.localHostId,
+    resetSupported: state?.tree?.resetContext?.version === 1 && state.tree.resetContext.commandVersion === 25,
   });
   const [treeHistoryOpen, setTreeHistoryOpen] = useState(false);
+  const [treeReset, setTreeReset] = useState<ContextResetConfirmation>();
+  const [treeResetBusy, setTreeResetBusy] = useState(false);
+  const [treeResetError, setTreeResetError] = useState<string>();
+  const treeResetRef = useRef(treeReset);
+  const resetFocusRef = useRef<ContextResetConfirmation | undefined>(undefined);
+  const readResetSource = (): ContextResetSource => ({ hostId, sessionId: selectedId ?? "",
+    connected: connected && Boolean(desktop.catalog.records.get(hostId)?.connected),
+    available: state?.tree?.resetContext?.version === 1 && state.tree.resetContext.commandVersion === 25,
+    idle: selected?.status === "idle" && !submissions.get(draftId),
+    visible: selectedRef.current === routeKey && !contentOverlayOpen && !selected?.archived,
+    tree: nativeTree.state.getSnapshot(), draft: drafts.get(draftId).draft });
+  const resetSourceRef = useRef(readResetSource);
+  useLayoutEffect(() => {
+    resetSourceRef.current = readResetSource; treeResetRef.current = treeReset;
+    const focus = resetFocusRef.current, current = readResetSource();
+    if (focus && (!current.visible || current.hostId !== focus.hostId || current.sessionId !== focus.sessionId)) resetFocusRef.current = undefined;
+    if (treeReset && !treeReset.submitted) setTreeResetError(treeReset.update(readResetSource()));
+  });
+  useLayoutEffect(() => {
+    if (!treeReset) return;
+    const check = () => { if (treeResetRef.current === treeReset && !treeReset.submitted) setTreeResetError(treeReset.update(resetSourceRef.current())); };
+    const offDraft = drafts.subscribe(check), offTree = nativeTree.state.subscribe(check);
+    return () => { offDraft(); offTree(); };
+  }, [treeReset, drafts, nativeTree.state]);
+  const requestTreeReset = (fromComposer = false) => {
+    try {
+      if (treeResetRef.current) throw new Error("Close the current context confirmation before starting another.");
+      const intent = new ContextResetConfirmation(readResetSource(), fromComposer);
+      resetFocusRef.current = undefined; treeResetRef.current = intent; setTreeReset(intent); setTreeResetError(undefined); setTreeHistoryOpen(false); setMenuOpen(false);
+    } catch (cause) { setActionError(errorMessage(cause)); }
+  };
+  const closeTreeReset = (intent: ContextResetConfirmation) => {
+    if (treeResetRef.current !== intent) return;
+    treeResetRef.current = undefined; setTreeReset(undefined); resetFocusRef.current = intent;
+    const originalInput = textarea.current;
+    requestAnimationFrame(() => {
+      const current = resetSourceRef.current();
+      if (resetFocusRef.current !== intent) return;
+      resetFocusRef.current = undefined;
+      if (!treeResetRef.current && textarea.current === originalInput && current.visible && current.hostId === intent.hostId && current.sessionId === intent.sessionId) originalInput?.focus();
+    });
+  };
+  const confirmTreeReset = async () => {
+    const intent = treeResetRef.current, ownerTree = nativeTree.state, originalRoute = routeKey;
+    if (!intent || intent.submitted || treeResetBusy) return;
+    try {
+      const request = intent.take(resetSourceRef.current());
+      setTreeResetBusy(true);
+      const result = await ownerTree.mutate({ hostId: intent.hostId, sessionId: intent.sessionId }, request);
+      if (selectedRef.current !== originalRoute || treeResetRef.current !== intent) return;
+      transcript.refresh();
+      // Consume only the original slash intent after a confirmed reset. History
+      // requests never consume the composer, and edits during the request survive.
+      if (!result.cancelled && intent.draft && sameDraftContent(intent.draft, drafts.get(draftId).draft)) drafts.update(draftId, { text: "" });
+      closeTreeReset(intent);
+      if (result.cancelled) setActionError("The native reset was not completed. The draft was retained.");
+    } catch (cause) {
+      if (selectedRef.current === originalRoute && treeResetRef.current === intent) setTreeResetError(errorMessage(cause));
+    } finally { setTreeResetBusy(false); }
+  };
+
   const [treeEdit, setTreeEdit] = useState<{ owner: string; targetId: string; text: string; imageCount: number; prepared?: TreeMutationResult; originalTicket?: TreeTicket }>();
-  useEffect(() => { setTreeHistoryOpen(false); setTreeEdit(undefined); }, [routeKey]);
+  useEffect(() => { setTreeHistoryOpen(false); setTreeEdit(undefined); treeResetRef.current = undefined; setTreeReset(undefined); }, [routeKey]);
   const openTreeHistory = () => { setMenuOpen(false); setTreeHistoryOpen(true); void nativeTree.state.refresh().catch(cause => setActionError(errorMessage(cause))); };
   const navigateTree = async (targetId: string, summarize: boolean, customInstructions?: string) => {
     const capturedRoute = routeKey, view = nativeTree.state.getSnapshot();
@@ -1447,6 +1510,28 @@ export function App() {
         }
         if (!native || !["executable", "partial"].includes(native.availability)) throw new Error("The owning host did not expose a supported /fork action. The draft was retained.");
       } catch (cause) { setActionError(errorMessage(cause)); return; }
+      finally { submitting.current = false; setBusy(false); }
+    }
+    const clearDraft = drafts.get(draftId).draft;
+    if (!submissions.get(draftId)?.uncertain && /^\s*\/clear(?:\s|$)/.test(clearDraft.text)) {
+      const originalRoute = selectedRef.current;
+      submitting.current = true; setBusy(true); setActionError(null);
+      try {
+        if (!selectedId || !connected || !bridge.getComposerActions) throw new Error("Open a connected conversation to clear context. The draft was retained.");
+        const target = { sessionId: selectedId }, catalog = await bridge.getComposerActions(target, false, hostId);
+        assertComposerOwner(catalog, hostId, target);
+        if (selectedRef.current !== originalRoute || !desktop.catalog.records.get(hostId)?.connected || !sameDraftContent(clearDraft, drafts.get(draftId).draft))
+          throw new Error("The original conversation, connection, or draft changed. Nothing was cleared.");
+        const native = catalog.commands.find(row => row.name === "clear" && row.availability !== "shadowed");
+        if (native?.source.kind === "builtin") {
+          if (native.desktopAction !== "clear-context" || !/^\s*\/clear\s*$/.test(clearDraft.text) || hasDraftContent({ ...clearDraft, text: "" }))
+            throw new Error("Clear context requires /clear with no arguments or attachments. The draft was retained.");
+          await nativeTree.state.refresh();
+          if (selectedRef.current !== originalRoute || !sameDraftContent(clearDraft, drafts.get(draftId).draft)) throw new Error("The conversation or draft changed while loading History. Nothing was cleared.");
+          requestTreeReset(true); return;
+        }
+        if (!native || !["executable", "partial"].includes(native.availability)) throw new Error("The owning host did not expose a supported /clear action. The draft was retained.");
+      } catch (cause) { if (selectedRef.current === originalRoute) setActionError(errorMessage(cause)); return; }
       finally { submitting.current = false; setBusy(false); }
     }
     const goalDraft = drafts.get(draftId).draft;
@@ -2410,7 +2495,9 @@ export function App() {
         executionChoices={panelPlan.value.executionChoices} receipt={nativePlan.view.receipt} failure={nativePlan.view.failure} error={nativePlan.view.error}
         {...planReviewPorts} externalEditorPorts={planEditorPorts} copy={typeof navigator.clipboard?.writeText === "function" ? copyText : undefined}/>}
     </dialog>
-    {treeHistoryOpen && selectedId && <SessionTreeHistory state={nativeTree.state} view={nativeTree.view} connected={connected} onClose={() => setTreeHistoryOpen(false)} onRestore={id => void restoreTreeEdit(id)} onNavigate={(id, summarize, instructions) => void navigateTree(id, summarize, instructions)}/>}
+    {treeReset && treeReset.hostId === hostId && treeReset.sessionId === selectedId && !contentOverlayOpen && <SessionTreeResetContext busy={treeResetBusy} disabled={Boolean(treeResetError) || treeReset.submitted}
+      error={treeResetError} onClose={() => { if (!treeResetBusy) closeTreeReset(treeReset); }} onConfirm={() => void confirmTreeReset()}/>}
+    {treeHistoryOpen && selectedId && <SessionTreeHistory state={nativeTree.state} view={nativeTree.view} connected={connected} onClose={() => setTreeHistoryOpen(false)} onResetContext={() => requestTreeReset()} onRestore={id => void restoreTreeEdit(id)} onNavigate={(id, summarize, instructions) => void navigateTree(id, summarize, instructions)}/>}
     {exportOwner && <SessionExportDialog key={`${exportOwner.hostId}:${exportOwner.sessionId}`} bridge={bridge} {...exportOwner} connected={connected && hostId === exportOwner.hostId && selected?.id === exportOwner.sessionId} onClose={() => setExportOwner(undefined)}/>}
     <dialog ref={dialogRef} className="app-dialog" onCancel={() => setDialog(null)} onClick={event => { if (event.target === event.currentTarget) setDialog(null); }}>
       <div className="dialog-header"><h2>{dialog === "rename" ? "Rename conversation" : dialog === "project" ? "Add remote project" : "Build status"}</h2><button className="icon-button" onClick={() => setDialog(null)} aria-label="Close dialog"><Icon name="close"/></button></div>

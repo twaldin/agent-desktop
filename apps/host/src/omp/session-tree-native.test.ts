@@ -3,7 +3,8 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 const evidence = process.env.AGENT_DESKTOP_TREE_TEST_EVIDENCE;
-for (const scenario of ["held-hook-stop", "held-controller-stop", "held-controller-dispose", "lifecycle", "cancelled-hook", "ask", "summary", "after-tree-hook", "entry-kinds", "fresh-owner", "flush-failure"]) {
+for (const scenario of ["held-hook-stop", "held-controller-stop", "held-controller-dispose", "lifecycle", "cancelled-hook", "ask", "summary", "after-tree-hook", "entry-kinds", "fresh-owner", "flush-failure",
+  "reset-context", "reset-controllers", "reset-clear-origin", "reset-refusals", "reset-native-busy", "reset-boundary-failure", "reset-flush-failure", "reset-recovered-edit"]) {
   test(`real pinned native conversation tree: ${scenario}`, async () => {
     if (evidence) await mkdir(evidence, { recursive: true });
     const root = await mkdtemp(path.join(evidence ?? tmpdir(), `native-tree-${scenario}-`));
@@ -12,5 +13,5 @@ for (const scenario of ["held-hook-stop", "held-controller-stop", "held-controll
     const [status, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
     await writeFile(path.join(root, "raw-run.json"), JSON.stringify({ argv, status, stdout, stderr }, null, 2));
     expect(status, `${scenario}: ${stderr}\n${stdout}\nRetained fixture: ${root}`).toBe(0);
-  }, 30_000);
+  }, 60_000);
 }

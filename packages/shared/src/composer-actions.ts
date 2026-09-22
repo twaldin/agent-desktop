@@ -21,7 +21,7 @@ export interface ComposerAction {
   subcommands?: Array<{ name: string; description: string; usage?: string; availability?: ComposerAvailability; reason?: string }>;
   argumentCompletions: boolean;
   /** Desktop-owned route for a native command whose TUI handler is intentionally not dispatched. */
-  desktopAction?: "side-chat" | "todos" | "usage-reset" | "tree" | "goal";
+  desktopAction?: "side-chat" | "todos" | "usage-reset" | "tree" | "goal" | "clear-context";
 }
 export interface ComposerActionsCatalog {
   protocolVersion: typeof COMPOSER_ACTIONS_PROTOCOL_VERSION;

@@ -809,7 +809,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       goalComposer: GOAL_COMPOSER_CAPABILITY,
       sidebarNavigation: SIDEBAR_NAVIGATION_CAPABILITY,
       drafts: store.listDrafts(), models, modelsLoading, automations: { capability: AUTOMATIONS_CAPABILITY }, pullRequests: PULL_REQUESTS_CAPABILITY, pullRequestWrites: PULL_REQUEST_WRITES_CAPABILITY, repositoryWatches: REPOSITORY_WATCH_CAPABILITY, branchQueries: BRANCH_QUERY_CAPABILITY, sessionSearch: { version: 1 }, forceTool: { version: 1, commandVersion: 18 }, plan: { version: 1, commandVersion: 19, document: { version: 1, commandVersion: 20 } }, queuedMessages: { version: 1, submissions: { version: 1, commandVersion: 13, images: { commandVersion: 17 } } }, taskLocations: { version: 1, commandVersion: 14 }, browserContinuations:{version:1,commandVersion:15}, commandKeybindings: { commandVersion: 11, snapshotVersion: 2, numberTargetVersion: 1 }, gitSubmissions: { commandVersion: 10 }, imageAttachments: attachments.capabilities, wholeFiles: { commandVersion: 7, ordinaryPrompt: true, maxFiles: MAX_WHOLE_FILE_ATTACHMENTS, inlineMentions: {commandVersion:8,repeatedSources:{commandVersion:9}} }, selectedText: { commandVersion: 6, maxSerializedChars: MAX_SELECTED_TEXT_SERIALIZED_CHARS, ordinaryPrompt: true }, newChatExecution: { commandVersion: 4, worktrees: true, startingRefs: { commandVersion: 12, remote: true } }, localEnvironments: { configuration: true, ...(nativeTerminals ? { actions: true as const } : {}), execution: { commandVersion: 5, scriptOutput: true, scriptCancellation: true } }, diagnostics: modelsError || preferenceError ? { models: modelsError, preferences: preferenceError } : undefined,
-      todos: SESSION_TODOS_CAPABILITY, tree: SESSION_TREE_CAPABILITY,
+      todos: SESSION_TODOS_CAPABILITY, tree: { ...SESSION_TREE_CAPABILITY, resetContext: { version: 1, commandVersion: 25 } },
       lastEventSequence: store.lastEventSequence, notifications: notificationEvents.current() };
   }
   function publish(input: EventInput, sessionActivity = false): void {
@@ -991,9 +991,10 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     return { ok: false, commandId: id, error: { code, message } };
   }
 
-  async function execute(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22 | 23 | 24): Promise<CommandResult> {
+  async function execute(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22 | 23 | 24 | 25): Promise<CommandResult> {
     const command = envelope.command;
-    if ((command.type === "session.tree.mutate" || command.type === "session.prompt" && command.treeTicket !== undefined) && commandVersion !== 23)
+    if ((command.type === "session.tree.mutate" || command.type === "session.prompt" && command.treeTicket !== undefined)
+      && commandVersion !== (command.type === "session.tree.mutate" && command.mutation.action === "reset-context" ? 25 : 23))
       return fail(envelope.id, "TREE_PROTOCOL_REQUIRED", "Native history requires version 23.");
     if (command.type === "session.todos.mutate" && commandVersion !== 22)
       return fail(envelope.id, "TODOS_REJECTED", "Native Todos require the revision-bound version 22 protocol.");
@@ -1436,7 +1437,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     return operation;
   }
 
-  async function dispatch(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22 | 23 | 24 = 2): Promise<CommandResult> {
+  async function dispatch(envelope: CommandEnvelope, commandVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22 | 23 | 24 | 25 = 2): Promise<CommandResult> {
     if (stopping) return fail(envelope.id, "HOST_STOPPING", "The host is stopping; reconnect before sending.");
     const hash = createHash("sha256").update(JSON.stringify(envelope.command)).digest("hex");
     // Workspace contents are already owned by their files. Persist the receipt/hash,
@@ -1735,6 +1736,10 @@ export async function startHost(options: { dataDirectory?: string; port?: number
           const record = store.environmentPreparations.get(decodeURIComponent(preparationPath[1]!));
           if (!record) return Response.json({ error: 'Preparation not found' }, { status: 404 });
           return Response.json(store.environmentPreparations.public(record), { headers: { 'Cache-Control': 'no-store' } });
+        }
+        if (request.method === "POST" && url.pathname === "/v25/commands") {
+          const value = await request.json();
+          return Response.json(await dispatch(parseCommandEnvelope(value, 25), 25));
         }
         if (request.method === "POST" && url.pathname === "/v24/commands") {
           const value = await request.json();

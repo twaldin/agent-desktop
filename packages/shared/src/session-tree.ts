@@ -1,5 +1,6 @@
 /** A tree ticket belongs to one loaded native session and its complete history. */
 export const SESSION_TREE_CAPABILITY = { version: 1, commandVersion: 23 } as const;
+export const SESSION_TREE_RESET_CAPABILITY = { version: 1, commandVersion: 25 } as const;
 export const SESSION_TREE_OWNER_HEADER = "X-Agent-Tree-Host-Id";
 export const MAX_TREE_BYTES = 8 * 1024 * 1024;
 export interface TreeTicket { nativeSessionId: string; epoch: string; revision: string }
@@ -15,7 +16,11 @@ export interface SessionTree {
   reconciliationRequired: boolean; busyReason?: string; recoveredDraft?: TreeDraftRecovery;
 }
 export type TreeMutation = { action: "navigate"; targetId: string; summarize: boolean; customInstructions?: string }
-  | { action: "label"; targetId: string; label: string | null };
+  | { action: "label"; targetId: string; label: string | null }
+  | { action: "reset-context"; origin?: "clear-command" };
+export function treeMutationCommandVersion(mutation: TreeMutation): 23 | 25 {
+  return mutation.action === "reset-context" ? SESSION_TREE_RESET_CAPABILITY.commandVersion : SESSION_TREE_CAPABILITY.commandVersion;
+}
 export interface TreeMutationRequest { sessionId: string; ticket: TreeTicket; mutation: TreeMutation }
 export interface TreeMutationResult { commandId: string; state: SessionTree; cancelled: boolean; draft?: TreeDraft; askReanswerCommitted?: boolean }
 export interface TreeJournalReceipt { commandId: string; state: "absent" | "pending" | "unknown" | "failed" | "succeeded"; result?: TreeMutationResult; submission?: { kind: "user-message" | "skill-message" | "native-command"; entryId?: string }; error?: string }
@@ -71,18 +76,22 @@ export function parseSessionTree(value: unknown): SessionTree {
   return result;
 }
 export function parseTreeMutationRequest(value: unknown): TreeMutationRequest {
-  const v = record(value, ["sessionId", "ticket", "mutation"]), m = record(v.mutation, ["action", "targetId", "summarize", "customInstructions", "label"]);
-  const sessionId = text(v.sessionId), ticket = parseTreeTicket(v.ticket), targetId = text(m.targetId);
+  const v = record(value, ["sessionId", "ticket", "mutation"]), m = record(v.mutation, ["action", "targetId", "summarize", "customInstructions", "label", "origin"]);
+  const sessionId = text(v.sessionId), ticket = parseTreeTicket(v.ticket);
   if (sessionId !== ticket.nativeSessionId) fail("owner");
   let mutation: TreeMutation;
-  if (m.action === "navigate") {
-    if (m.label !== undefined) fail("navigation fields");
-    const summarize = bool(m.summarize);
+  if (m.action === "reset-context") {
+    record(m, ["action", "origin"]);
+    if (m.origin !== undefined && m.origin !== "clear-command") fail("reset origin");
+    mutation = { action: "reset-context", ...(m.origin === undefined ? {} : { origin: "clear-command" }) };
+  } else if (m.action === "navigate") {
+    if (m.label !== undefined || "origin" in m) fail("navigation fields");
+    const targetId = text(m.targetId), summarize = bool(m.summarize);
     if (m.customInstructions !== undefined && !summarize) fail("summary instructions");
     mutation = { action: "navigate", targetId, summarize, ...(m.customInstructions === undefined ? {} : { customInstructions: text(m.customInstructions, 65536, true) }) };
   } else if (m.action === "label") {
-    if (m.summarize !== undefined || m.customInstructions !== undefined) fail("label fields");
-    mutation = { action: "label", targetId, label: m.label === null ? null : text(m.label, 4096, true) };
+    if (m.summarize !== undefined || m.customInstructions !== undefined || "origin" in m) fail("label fields");
+    mutation = { action: "label", targetId: text(m.targetId), label: m.label === null ? null : text(m.label, 4096, true) };
   } else return fail("mutation");
   return { sessionId, ticket, mutation };
 }

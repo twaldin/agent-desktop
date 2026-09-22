@@ -31,6 +31,7 @@ const supportedBuiltins = new Set(["force", "model", "switch", "fast", "skillful
 const identityCommands = new Set(["new", "fresh", "clear", "drop", "resume", "branch", "fork", "tree", "move", "wt", "quit", "join", "leave"]);
 export function builtinAvailability(name: string, args?: string): { availability: ComposerAvailability; reason?: string } {
   if (name === "tree") return { availability: "executable" };
+  if (name === "clear") return { availability: "partial", reason: "Clear active model context after confirmation in the owning conversation. Saved history is retained." };
   if (name === "export") return { availability: "executable" };
   if (name === "goal") return { availability: "partial", reason: "Open the owning Goal panel, or prepare a new objective in the composer before sending." };
   if (supportedBuiltins.has(name)) return { availability: "executable" };
@@ -85,7 +86,7 @@ function nativeBuiltinRows(): ComposerAction[] {
     argumentHint: command.acpInputHint ?? command.inlineHint,
     subcommands: command.subcommands?.map(sub => ({ ...sub, ...builtinAvailability(command.name, sub.name) })),
     argumentCompletions: Boolean(command.subcommands?.length),
-    ...(command.name === "goal" ? { desktopAction: "goal" as const } : command.name === "tree" ? { desktopAction: "tree" as const } : command.name === "btw" ? { desktopAction: "side-chat" as const } : command.name === "todo" ? { desktopAction: "todos" as const } : command.name === "usage" ? { desktopAction: "usage-reset" as const } : {}),
+    ...(command.name === "clear" ? { desktopAction: "clear-context" as const } : command.name === "goal" ? { desktopAction: "goal" as const } : command.name === "tree" ? { desktopAction: "tree" as const } : command.name === "btw" ? { desktopAction: "side-chat" as const } : command.name === "todo" ? { desktopAction: "todos" as const } : command.name === "usage" ? { desktopAction: "usage-reset" as const } : {}),
   }));
 }
 

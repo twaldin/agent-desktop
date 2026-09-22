@@ -42,16 +42,20 @@ function directory(value: unknown): string {
 }
 
 /** Normalize untrusted transport data before it reaches filesystem/runtime operations. */
-export function parseCommandEnvelope(value: unknown, transportVersion?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22 | 23 | 24): CommandEnvelope {
+export function parseCommandEnvelope(value: unknown, transportVersion?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22 | 23 | 24 | 25): CommandEnvelope {
   const envelope = object(value);
-  if (envelope.commandVersion !== undefined && ![4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,22,23,24].some(version => envelope.commandVersion === version)) throw new Error('Unsupported command version.');
+  if (envelope.commandVersion !== undefined && ![4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,22,23,24,25].some(version => envelope.commandVersion === version)) throw new Error('Unsupported command version.');
   const version = envelope.commandVersion as CommandEnvelope["commandVersion"];
   const command = object(envelope.command);
   const goalCommand = command.type === "draft.put" && Object.hasOwn(object(command.draft), "goal") || Object.hasOwn(command, "goal");
   if ((goalCommand || version === 24 || transportVersion === 24) && (version !== 24 || transportVersion !== undefined && transportVersion !== 24
     || command.type !== "draft.put" && command.type !== "session.prompt"))
     throw new Error("Goal composer intent requires command version 24 and its original version 24 endpoint.");
-  const treeCommand = command.type === "session.tree.mutate" || command.type === "session.prompt" && command.treeTicket !== undefined;
+  const resetContextCommand = command.type === "session.tree.mutate" && object(command.mutation).action === "reset-context";
+  if ((resetContextCommand || version === 25 || transportVersion === 25)
+    && (!resetContextCommand || version !== 25 || transportVersion !== undefined && transportVersion !== 25))
+    throw new Error("Clear context requires command version 25 and the version 25 endpoint.");
+  const treeCommand = !resetContextCommand && (command.type === "session.tree.mutate" || command.type === "session.prompt" && command.treeTicket !== undefined);
   if ((treeCommand || version === 23 || transportVersion === 23) && (!treeCommand || version !== 23 || transportVersion !== undefined && transportVersion !== 23))
     throw new Error("Native history requires command version 23 and the version 23 endpoint.");
   if (command.type === "session.todos.mutate" && (version !== 22 || transportVersion !== undefined && transportVersion !== 22))
@@ -181,7 +185,7 @@ function parseCommandBody(value: unknown, commandVersion?: CommandEnvelope["comm
       ...(input.approvalMode === undefined ? {} : { approvalMode: approvalMode(input.approvalMode) }),
     } };
     case "session.tree.mutate": {
-      if (commandVersion !== 23) throw new Error("Native history requires command version 23.");
+      if (commandVersion !== (object(input.mutation).action === "reset-context" ? 25 : 23)) throw new Error("Native history requires the matching command version.");
       const { type: _type, ...request } = input;
       return { id: parseTreeCommandId(id), command: { type, ...parseTreeMutationRequest(request) } };
     }

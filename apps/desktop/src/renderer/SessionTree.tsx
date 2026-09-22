@@ -7,10 +7,12 @@ import { Icon } from "./Icons";
 import { ComposerEditor, type ComposerEditorHandle } from "./ComposerEditor";
 import "./session-tree.css";
 
-export function SessionTreeHistory({ state, view, connected, onClose, onNavigate, onRestore }: {
+export function SessionTreeHistory({ state, view, connected, onClose, onNavigate, onRestore, onResetContext }: {
   state: SessionTreeState; view: SessionTreeView; connected: boolean; onClose(): void;
   onRestore(commandId: string): void;
   onNavigate(targetId: string, summarize: boolean, customInstructions?: string): void;
+  /** Hands the whole context reset to the owner, which confirms it and runs the native command. */
+  onResetContext?(): void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [query, setQuery] = useState(""), [filter, setFilter] = useState("messages"), [selected, select] = useState<string>();
@@ -47,7 +49,27 @@ export function SessionTreeHistory({ state, view, connected, onClose, onNavigate
     {selectedEntry && <label className="session-tree-summary">Branch summary<select aria-label="Branch summary" value={summary} onChange={event => setSummary(event.target.value)}><option value="none">No summary</option><option value="summary">Summarize</option><option value="custom">Summarize with custom prompt</option></select></label>}
     {selectedEntry && summary === "custom" && <textarea aria-label="Custom summary instructions" placeholder="Instructions for the native branch summary" value={instructions} onChange={event => setInstructions(event.target.value)}/>}
     {view.value?.recoveredDraft && <button type="button" className="secondary-button" disabled={!connected || view.pending} onClick={() => onRestore(view.value!.recoveredDraft!.commandId)}>Resume preserved edit</button>}
-    <div className="dialog-footer"><button type="button" className="secondary-button" disabled={!connected || view.loading || view.pending} onClick={() => void state.refresh()}>Refresh{view.original ? " original status" : ""}</button><button type="button" className="primary-button" disabled={blocked || !selectedEntry} onClick={() => { if (selected) onNavigate(selected, summary !== "none", summary === "custom" ? instructions : undefined); }}>{selectedEntry?.editable ? "Edit from here" : "Continue from here"}</button></div>
+    <div className="dialog-footer"><button type="button" className="secondary-button" disabled={!connected || view.loading || view.pending} onClick={() => void state.refresh()}>Refresh{view.original ? " original status" : ""}</button>
+      {onResetContext && <button type="button" className="secondary-button" disabled={blocked || !view.value || !view.resetSupported} title={view.resetSupported ? undefined : "The owning host and desktop must both support clearing native context."} onClick={onResetContext}>Clear context</button>}
+      <button type="button" className="primary-button" disabled={blocked || !selectedEntry} onClick={() => { if (selected) onNavigate(selected, summary !== "none", summary === "custom" ? instructions : undefined); }}>{selectedEntry?.editable ? "Edit from here" : "Continue from here"}</button></div>
+  </dialog>;
+}
+
+/** Presentation only: the owner holds the immutable reset intent, guards it and runs the
+ * native command. This dialog never reads the latest ticket or draft and never dispatches. */
+export function SessionTreeResetContext({ busy, disabled, error, onClose, onConfirm }: {
+  busy: boolean; disabled: boolean; error?: string; onClose(): void; onConfirm(): void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => { dialog.current?.showModal(); return () => dialog.current?.close(); }, []);
+  const close = () => { if (!busy) onClose(); };
+  return <dialog ref={dialog} className="app-dialog session-tree-history" aria-labelledby="reset-context-title" onCancel={event => { event.preventDefault(); close(); }}>
+    <div className="dialog-header session-tree-heading"><h2 id="reset-context-title">Clear context</h2><button type="button" className="icon-button" aria-label="Close clear context" disabled={busy} onClick={close}><Icon name="close"/></button></div>
+    <p className="session-tree-note">Clears the active context this conversation sends to the model. The native history stays in this conversation and remains readable here.</p>
+    {error && <p className="inline-error" role="alert">{error}</p>}
+    {busy && <p role="status">Clearing the active context…</p>}
+    <div className="dialog-footer"><button type="button" className="secondary-button" disabled={busy} onClick={close}>Cancel</button>
+      <button type="button" className="primary-button" disabled={busy || disabled} onClick={onConfirm}>Clear context</button></div>
   </dialog>;
 }
 

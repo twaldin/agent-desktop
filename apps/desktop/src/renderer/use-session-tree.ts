@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import type { DesktopBridge, DesktopEvent } from "../../../../packages/shared/src/protocol";
-import { parseSessionTreeResponse, parseTreeCommandId, parseTreeMutationRequest, parseTreeMutationResult, SESSION_TREE_CAPABILITY,
+import { parseSessionTreeResponse, parseTreeCommandId, parseTreeMutationRequest, parseTreeMutationResult, SESSION_TREE_CAPABILITY, SESSION_TREE_RESET_CAPABILITY, treeMutationCommandVersion,
   type SessionTree, type TreeJournalReceipt, type TreeMutationRequest, type TreeMutationResult } from "../../../../packages/shared/src/session-tree";
 
 /** Proven no-effect refusal: local admission or an explicit host rejection code. */
@@ -22,9 +22,13 @@ export interface SessionTreeView {
   receipt?: TreeJournalReceipt;
   /** Retained confirmed native result; draft recovery also lives on its native branch. */
   result?: TreeMutationResult;
+  /** The owning host and desktop both advertise the native context reset command. */
+  resetSupported: boolean;
 }
-type TreeEnvelope = { id: string; commandVersion: typeof SESSION_TREE_CAPABILITY.commandVersion; command: { type: "session.tree.mutate" } & TreeMutationRequest };
-const refusedCodes: Record<string, true> = { TREE_REJECTED: true, TREE_PROTOCOL_UNSUPPORTED: true };
+/** A stored envelope keeps the command version its own action requires, never the newest one. */
+type TreeCommandVersion = typeof SESSION_TREE_CAPABILITY.commandVersion | typeof SESSION_TREE_RESET_CAPABILITY.commandVersion;
+type TreeEnvelope = { id: string; commandVersion: TreeCommandVersion; command: { type: "session.tree.mutate" } & TreeMutationRequest };
+const refusedCodes: Record<string, true> = { TREE_REJECTED: true, TREE_PROTOCOL_UNSUPPORTED: true, TREE_RESET_PROTOCOL_UNSUPPORTED: true };
 const message = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
 const receiptGuidance: Record<Exclude<TreeJournalReceipt["state"], "succeeded" | "failed">, string> = {
   pending: "The original Tree command is still pending on the owning host. Check status without repeating it.",
@@ -35,11 +39,11 @@ const receiptGuidance: Record<Exclude<TreeJournalReceipt["state"], "succeeded" |
 /** Owns the desktop read/admission lifetime, not native Tree state. Every write
  * goes through the existing deduplicated host command path. Reads never replay. */
 export class SessionTreeState {
-  #ports?: SessionTreePorts; #enabled = false; #generation = 0; #reading = false; #again = false; #readToken = 0;
+  #ports?: SessionTreePorts; #enabled = false; #resetSupported = false; #generation = 0; #reading = false; #again = false; #readToken = 0;
   #listeners = new Set<() => void>(); #view: SessionTreeView;
   #original?: TreeEnvelope; #restored = false;
   constructor(readonly owner: SessionTreeOwner) {
-    this.#view = { owner, value: null, fresh: false, loading: false, pending: false, uncertain: false };
+    this.#view = { owner, value: null, fresh: false, loading: false, pending: false, uncertain: false, resetSupported: false };
   }
   subscribe = (listener: () => void) => { this.#listeners.add(listener); return () => { this.#listeners.delete(listener); }; };
   getSnapshot = () => this.#view;
@@ -53,7 +57,7 @@ export class SessionTreeState {
     const { type: _type, ...request } = envelope.command;
     this.#set({ original: { commandId: envelope.id, request } });
   }
-  configure(ports: SessionTreePorts, enabled: boolean, unavailable?: string) {
+  configure(ports: SessionTreePorts, enabled: boolean, unavailable?: string, resetSupported = false) {
     this.#ports = ports;
     if (!this.#restored) {
       this.#restored = true;
@@ -61,13 +65,18 @@ export class SessionTreeState {
         const text = ports.storage?.read(this.#storageKey());
         if (text) {
           const raw: unknown = JSON.parse(text);
-          if (!raw || typeof raw !== "object" || !("id" in raw) || !("commandVersion" in raw) || raw.commandVersion !== SESSION_TREE_CAPABILITY.commandVersion
+          if (!raw || typeof raw !== "object" || !("id" in raw) || !("commandVersion" in raw) || typeof raw.commandVersion !== "number"
             || !("command" in raw) || !raw.command || typeof raw.command !== "object" || !("type" in raw.command) || raw.command.type !== "session.tree.mutate"
             || Object.keys(raw).some(key => !["id", "commandVersion", "command"].includes(key))) throw new Error("Stored Tree command is invalid.");
           const id = parseTreeCommandId(raw.id), { type: _type, ...fields } = raw.command;
           const request = parseTreeMutationRequest(fields);
           if (request.sessionId !== this.owner.sessionId) throw new Error("Stored Tree command belongs to another owner.");
-          this.#original = { id, commandVersion: SESSION_TREE_CAPABILITY.commandVersion, command: { type: "session.tree.mutate", ...request } };
+          // The stored version is the one its own action requires; a newer capability never
+          // rewrites an older retained command, and an older record never carries a reset.
+          const commandVersion = treeMutationCommandVersion(request.mutation);
+          if (raw.commandVersion !== commandVersion)
+            throw new Error(`Stored Tree command version ${raw.commandVersion} does not match its "${request.mutation.action}" action.`);
+          this.#original = { id, commandVersion, command: { type: "session.tree.mutate", ...request } };
           this.#set({ original: { commandId: id, request }, uncertain: true, error: "Check the original Tree command status before making another change." });
         }
       } catch (cause) {
@@ -76,7 +85,9 @@ export class SessionTreeState {
     }
     if (this.#enabled !== enabled) { this.#generation++; this.#reading = false; this.#again = false; }
     this.#enabled = enabled;
-    this.#set({ unavailable, ...(!enabled ? { fresh: false, loading: false } : {}) });
+    // Inspecting a retained command never depends on the current reset capability.
+    this.#resetSupported = resetSupported;
+    this.#set({ unavailable, resetSupported, ...(!enabled ? { fresh: false, loading: false } : {}) });
   }
   disconnect() { this.#enabled = false; this.#generation++; this.#reading = false; this.#again = false; this.#set({ fresh: false, loading: false }); }
   #assert(owner = this.owner) {
@@ -126,6 +137,10 @@ export class SessionTreeState {
     let request: TreeMutationRequest;
     try { request = parseTreeMutationRequest(raw); } catch (cause) { throw new TreeNotSubmitted(message(cause)); }
     if (request.sessionId !== owner.sessionId) throw new TreeNotSubmitted("The Tree request belongs to another conversation.");
+    // A reset the owning host cannot accept is refused here, before any record or
+    // dispatch exists, so the local refusal is itself proof that nothing happened.
+    if (request.mutation.action === "reset-context" && !this.#resetSupported)
+      throw new TreeNotSubmitted("Update the owning host and desktop to clear this conversation's native context.");
     const view = this.#view;
     if (!view.fresh || view.pending || view.uncertain || !view.value) throw new TreeNotSubmitted("Refresh the current Tree before changing them.");
     if (view.value.reconciliationRequired) throw new TreeNotSubmitted("The native Tree need reconciliation. Check status; do not repeat the change.");
@@ -133,7 +148,7 @@ export class SessionTreeState {
     if (ticket.epoch !== current.epoch || ticket.nativeSessionId !== current.nativeSessionId || ticket.revision !== current.revision)
       throw new TreeNotSubmitted("The native Tree changed. Review the latest state before applying this change.");
     const ports = this.#ports!, generation = this.#generation;
-    const envelope: TreeEnvelope = { id: crypto.randomUUID(), commandVersion: SESSION_TREE_CAPABILITY.commandVersion, command: { type: "session.tree.mutate", ...request } };
+    const envelope: TreeEnvelope = { id: crypto.randomUUID(), commandVersion: treeMutationCommandVersion(request.mutation), command: { type: "session.tree.mutate", ...request } };
     try { this.#remember(envelope); } catch (cause) { throw new TreeNotSubmitted(`The Tree recovery record could not be saved: ${message(cause)}`); }
     this.#invalidateRead(); this.#set({ pending: true, error: undefined, receipt: undefined, result: undefined });
     try {
@@ -176,15 +191,16 @@ export function treeEventMatches(event: DesktopEvent, owner: SessionTreeOwner, l
 }
 
 export function useSessionTree(owner: SessionTreeOwner, ports: SessionTreePorts,
-  options: { connected: boolean; supported: boolean; active: boolean; localHostId?: string }) {
+  options: { connected: boolean; supported: boolean; active: boolean; localHostId?: string; resetSupported?: boolean }) {
   const states = useMemo(() => new Map<string, SessionTreeState>(), []);
   const state = useMemo(() => {
     const key = JSON.stringify(owner); let value = states.get(key);
     if (!value) { value = new SessionTreeState(owner); states.set(key, value); } return value;
   }, [states, owner.hostId, owner.sessionId]);
   const enabled = !!owner.sessionId && options.connected && options.supported && options.active;
+  const resetSupported = options.resetSupported ?? false;
   useLayoutEffect(() => { state.configure(ports, enabled, !owner.sessionId ? "Open a conversation to see its native Tree."
-    : !options.supported ? "Update the owning host and desktop to use native Tree." : undefined); }, [state, ports, enabled, options.supported]);
+    : !options.supported ? "Update the owning host and desktop to use native Tree." : undefined, resetSupported); }, [state, ports, enabled, options.supported, resetSupported]);
   useLayoutEffect(() => () => state.disconnect(), [state]);
   useEffect(() => { if (enabled) void state.refresh(); }, [state, enabled]);
   useEffect(() => {
@@ -192,11 +208,11 @@ export function useSessionTree(owner: SessionTreeOwner, ports: SessionTreePorts,
     return ports.bridge.subscribe(event => {
       if ((event.hostId ?? options.localHostId) === owner.hostId && event.type === "connection") {
         if (!event.connected) state.disconnect();
-        else { state.configure(ports, true); void state.refresh().catch(() => {}); }
+        else { state.configure(ports, true, undefined, resetSupported); void state.refresh().catch(() => {}); }
       }
       else if (treeEventMatches(event, owner, options.localHostId)) { state.invalidate(); void state.refresh().catch(() => {}); }
     });
-  }, [state, ports.bridge, enabled, options.localHostId]);
+  }, [state, ports.bridge, enabled, options.localHostId, resetSupported]);
   const view = useSyncExternalStore(state.subscribe, state.getSnapshot, state.getSnapshot);
   return { state, view };
 }

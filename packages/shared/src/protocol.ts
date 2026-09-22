@@ -276,7 +276,7 @@ export interface HostState {
   queuedMessages?: { version: 1; submissions?: { version: 1; commandVersion: 13; images?: { commandVersion: 17 } } };
   forceTool?: { version: 1; commandVersion: 18 };
   plan?: { version: 1; commandVersion: 19; document?: { version: 1; commandVersion: 20 } };
-  tree?: typeof import("./session-tree").SESSION_TREE_CAPABILITY;
+  tree?: typeof import("./session-tree").SESSION_TREE_CAPABILITY & { resetContext?: { version: 1; commandVersion: 25 } };
   todos?: typeof import("./session-todos").SESSION_TODOS_CAPABILITY;
   taskLocations?: { version: 1; commandVersion: 14 };
   browserContinuations?: { version: 1; commandVersion: 15 };
@@ -335,7 +335,7 @@ export interface CommandEnvelope {
   id: string;
   command: HostCommand;
   /** Required for consumption of a draft carrying new-chat execution state. */
-  commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22 | 23 | 24;
+  commandVersion?: 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 22 | 23 | 24 | 25;
 }
 
 export interface ImageAdmission {

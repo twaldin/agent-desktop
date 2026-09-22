@@ -820,6 +820,7 @@ export class OmpRuntime {
       };
       const nativeTree = treeController = new NativeSessionTree(session, manager, {
         assertOwner: assertSessionActive, ui,
+        onProviderSessionChanged: applyFreshProviderIdentity,
         getBusyReason: () => usage.busy || promptInFlight || admissionPending || accountMutation || goalMutation
           || planMutation || nativePlan.busy || nativeTodos.busy || mcpMutation || pluginReload || interruptsInFlight
           || session.isStreaming || session.isCompacting || session.isAborting || session.hasPostPromptWork
