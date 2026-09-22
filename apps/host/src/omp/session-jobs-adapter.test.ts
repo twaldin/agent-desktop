@@ -36,6 +36,7 @@ test("native jobs adapter scopes to the original owner, projects queued honestly
   expect(result.queued).toEqual({ parked: true, started: false });
   expect(result.cancel).toEqual({ requested: true, abortedBeforeSettle: true, settledLater: true, second: false });
   expect(result.inspect).toEqual({ inspections: 3, consumed: false, pending: true, truncated: true, errorText: "boom" });
+  expect(result.nativeDelivery).toEqual({ consumedAfterDelivery: true });
   expect(result.reuse).toMatchObject({ sameId: true, guardChanged: true });
   expect(result.overflow).toEqual({ refused: true, untouched: 101 });
   expect(result.disposed).toEqual({ retired: true });

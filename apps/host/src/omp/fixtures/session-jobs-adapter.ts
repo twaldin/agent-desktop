@@ -51,6 +51,8 @@ const refuses = (work: () => unknown, code: "STALE_OWNER" | "STALE_JOB" | "JOBS_
 const gate = <T,>() => Promise.withResolvers<T>();
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 const result: Record<string, unknown> = {};
+const releaseDelivery = gate<void>();
+const originalEnqueue = session.yieldQueue.enqueueWithReceipt;
 
 try {
   // Foreign owner: the SDK's own snapshot scope is the adapter's scope; forged targets never resolve.
@@ -101,6 +103,13 @@ try {
   assert.equal(lateInspect.action, "inspect"); assert.equal(lateInspect.detail.resultText, "late output");
   result.cancel = { requested: cancelled.requested, abortedBeforeSettle, settledLater: settled, second: again.requested };
 
+  // Hold the public yield-queue boundary so native delivery cannot finish before
+  // the pending-result assertions. All formatting, manager state and reads stay real.
+  session.yieldQueue.enqueueWithReceipt = function<P>(kind: string, entry: P): Promise<void> {
+    if (kind === "async-result")
+      return releaseDelivery.promise.then(() => originalEnqueue.call(this, kind, entry));
+    return originalEnqueue.call(this, kind, entry);
+  };
   // Inspection is non-consuming: the agent's own delivery stays pending and unsuppressed.
   const completedId = jobs.register("eval", "compute", async () => "hello", { ownerId });
   await jobs.getJob(completedId)!.promise; await tick();
@@ -122,6 +131,17 @@ try {
   const failed = control("inspect", rowOf(failedId).target);
   assert.equal(failed.action, "inspect"); assert.deepEqual({ status: rowOf(failedId).status, errorText: failed.detail.errorText, resultText: failed.detail.resultText }, { status: "failed", errorText: "boom", resultText: undefined });
   result.inspect = { inspections: inspections.length, consumed: consumedAfterInspections, pending: delivery.pendingJobIds.includes(completedId), truncated: large.detail.truncated, errorText: failed.detail.errorText };
+
+  session.yieldQueue.enqueueWithReceipt = originalEnqueue;
+  releaseDelivery.resolve();
+  assert.equal(await jobs.drainDeliveries({ filter: { ownerId }, timeoutMs: 5000 }), true);
+  assert.equal(jobs.isJobResultConsumed(completedId), true, "original native delivery may consume after release");
+  const delivered = control("inspect", completed.target);
+  assert.equal(delivered.action, "inspect");
+  assert.equal(delivered.detail.consumed, true, "inspection reports an already-delivered result honestly");
+  assert.equal(delivered.detail.resultText, "hello");
+  assert.ok(!jobs.getDeliveryState({ ownerId }).pendingJobIds.includes(completedId));
+  result.nativeDelivery = { consumedAfterDelivery: delivered.detail.consumed };
 
   // Native id reuse: after the SDK's own eviction the same id names a different job; old targets die with the old object.
   const staleTarget = completed.target;
@@ -165,6 +185,8 @@ try {
   result.blockedFetches = blockedFetches; result.configUnchanged = true;
   console.log(JSON.stringify(result));
 } finally {
+  session.yieldQueue.enqueueWithReceipt = originalEnqueue;
+  releaseDelivery.resolve();
   await session.dispose().catch(() => {});
   auth.close();
 }
