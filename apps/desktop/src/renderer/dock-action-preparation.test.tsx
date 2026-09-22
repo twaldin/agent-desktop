@@ -26,7 +26,7 @@ function fixture(target: {sessionId:string}|{projectId:string}|{filePath:string}
 }
 
 test("local preparation is owner-qualified and side-effect free; ordinary opening consumes the same descriptor",()=>{
-  for(const kind of ["files","review","side-chat","goal","worktrees"] as const) {
+  for(const kind of ["files","review","side-chat","goal","subagents","worktrees"] as const) {
     const f=fixture(),dock=f.render(),before=dock.snapshot,result=dock.prepareOpen(kind);f.flush();
     expect(result.status).toBe("ready");if(result.status!=="ready")throw new Error("expected prepared");
     expect(result.tab.hostId).toBe("owner");expect(result.tab.target).toBe("session:session");expect(result.tab.id).toBe(dockTabId(result.tab));expect(f.render().snapshot).toBe(before);expect(f.errors).toEqual([]);

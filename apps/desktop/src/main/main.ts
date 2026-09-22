@@ -53,6 +53,8 @@ import { requestExtensionUi } from "./extension-ui-transport";
 import { requestSessionActivity } from "./session-activity-transport";
 import { requestSessionJobs } from "./session-jobs-transport";
 import { parseSessionJobsRequest } from "../../../../packages/shared/src/session-jobs";
+import { requestSessionSubagents } from "./session-subagents-transport";
+import { parseSessionSubagentsRequest } from "../../../../packages/shared/src/session-subagents";
 import { requestBtw } from "./btw-transport";
 import { mutateQueuedMessages, requestQueuedMessages } from "./queued-messages-transport";
 import { requestDetachedQuestions } from './detached-questions-transport';
@@ -638,6 +640,16 @@ ipcMain.handle("host:session-jobs", async (event, sessionId: string, input: unkn
   const request = parseSessionJobsRequest(input), endpoint = await endpointFor(hostId);
   assertTrustedSender(event);
   const result = await requestSessionJobs(endpoint, sessionId, request);
+  assertTrustedSender(event);
+  return result;
+});
+ipcMain.handle("host:session-subagents", async (event, sessionId: string, input: unknown, hostId: string) => {
+  assertTrustedSender(event);
+  if ([sessionId, hostId].some(value => typeof value !== "string" || !value || value.length > 200 || /[\u0000-\u001f\u007f]/.test(value)))
+    throw new Error("An explicit original host and conversation are required for Subagents.");
+  const request = parseSessionSubagentsRequest(input), endpoint = await endpointFor(hostId);
+  assertTrustedSender(event);
+  const result = await requestSessionSubagents(endpoint, sessionId, request);
   assertTrustedSender(event);
   return result;
 });

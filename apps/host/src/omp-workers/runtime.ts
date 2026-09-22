@@ -11,6 +11,7 @@ import { parsePlanMutationRequest, parsePlanControlRequest, parsePlanControlResu
 import { parsePlanDocumentSection, type PlanDocumentSection } from "../../../../packages/shared/src/plan-document";
 import { parseSessionTodos, parseTodoCommandId, parseTodoMutationRequest, parseTodoMutationResult, type SessionTodos, type TodoMutationRequest, type TodoMutationResult } from "../../../../packages/shared/src/session-todos";
 import { parseSessionJobsRequest, parseSessionJobsResult, type SessionJobsRequest, type SessionJobsResult } from "../../../../packages/shared/src/session-jobs";
+import { parseSessionSubagentsRequest, parseSessionSubagentsResult, assertSessionSubagentsResultMatches } from "../../../../packages/shared/src/session-subagents";
 import { requestWorkerBrowserObservation, type WorkerBrowserObservation } from "../omp-browser/observation";
 import { openWorkerBrowserEvaluation, recoverWorkerBrowserEvaluation, type WorkerBrowserEvaluation } from "../omp-browser/evaluation-client";
 import { copyEvaluationBinding, copyEvaluationFrame, copyEvaluationValue, evaluationKey, type BrowserEvaluationBinding, type BrowserEvaluationFrame } from "../omp-browser/evaluation-wire";
@@ -1311,6 +1312,15 @@ export class WorkerRuntime {
         if (disposeCall || client.failure || state().id !== origin.id || state().sessionFile !== origin.file
           || value.snapshot.owner.nativeSessionId !== origin.id || value.action !== request.action)
           throw new Error("The original native jobs worker changed during the request; no operation was replayed.");
+        return value;
+      },
+      nativeSubagents: async raw => {
+        const request = parseSessionSubagentsRequest(raw), origin = { id: state().id, file: state().sessionFile };
+        if (disposeCall || client.failure) throw new Error("The original native Subagents worker is unavailable.");
+        const value = parseSessionSubagentsResult(await client.request({ operation: "nativeSubagents", args: { request } }, 15_000));
+        if (disposeCall || client.failure || state().id !== origin.id || state().sessionFile !== origin.file || value.owner.nativeSessionId !== origin.id)
+          throw new Error("The original native Subagents worker changed during the read.");
+        assertSessionSubagentsResultMatches(request, value);
         return value;
       },
       mutateGoal: request => client.request({ operation: "mutateGoal", args: { request } }, 30_000),

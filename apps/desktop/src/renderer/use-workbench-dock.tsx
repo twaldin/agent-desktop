@@ -170,13 +170,13 @@ export function useWorkbenchDock(
   ): TerminalPreparation {
     if (!workspace) return { status: "error", outcome: "not-submitted", message: "Choose a workspace to open a panel." };
     if ("filePath" in workspace) return { status: "error", outcome: "not-submitted", message: "Standalone files support only file tabs." };
-    if ((kind === "browser" || kind === "side-chat") && !("sessionId" in workspace))
-      return { status: "error", outcome: "not-submitted", message: `${kind === "browser" ? "Browser tabs" : "Side chat"} require a native session.` };
+    if ((kind === "browser" || kind === "side-chat" || kind === "subagents") && !("sessionId" in workspace))
+      return { status: "error", outcome: "not-submitted", message: `${kind === "browser" ? "Browser tabs" : kind === "subagents" ? "Subagents" : "Side chat"} require a native session.` };
     if (kind === "browser" && "sessionId" in workspace)
       return { status: "ready", tab: createBrowserNewTab(owner, workspace.sessionId) };
     const descriptor = {
       kind, hostId: owner, target: workspaceKey(workspace) as DockTarget,
-      title: kind === "side-chat" ? "Side chat" : kind === "goal" ? "Edit goal" : kind === "review" ? "Review" : kind === "worktrees" ? "Worktrees" : "Open file",
+      title: kind === "side-chat" ? "Side chat" : kind === "goal" ? "Edit goal" : kind === "subagents" ? "Subagents" : kind === "review" ? "Review" : kind === "worktrees" ? "Worktrees" : "Open file",
     };
     return { status: "ready", tab: { ...descriptor, id: dockTabId(descriptor) } };
   }

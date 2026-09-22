@@ -74,6 +74,7 @@ export type WorkerOperation = BrowserEvaluationOperation
   | { operation: "getMessages" }
   | { operation: "getSessionActivity" }
   | { operation: "nativeJobs"; args: { request: import("../../../../packages/shared/src/session-jobs").SessionJobsRequest } }
+  | { operation: "nativeSubagents"; args: { request: import("../../../../packages/shared/src/session-subagents").SessionSubagentsRequest } }
   | { operation: "readUsage"; args: { mode: import("../../../../packages/shared/src/session-usage").UsageRefresh } }
   | { operation: "prepareUsageReset"; args: import("../../../../packages/shared/src/session-usage").UsageResetPrepare }
   | { operation: "redeemUsageReset"; args: { ticket: string; redeemRequestId: string } }

@@ -22,11 +22,12 @@ export interface EnvironmentCardProps {
   /** Native Todos panel for the selected conversation; omitted when no conversation is open. */
   todos?: { count: number; content: ReactNode };
   jobs?: { count?: number; content: ReactNode };
+  onOpenSubagents?(): void;
   /** Existing sessions never fall back to the global host picker while their host location is loading or unavailable. */
   taskLocation?: { snapshot: TaskLocationSnapshot; actions: TaskLocationActions } | { state: "loading" | "unavailable"; reason?: string };
 }
 
-export function EnvironmentCard({ hostName, cwd, local, connected, workspace, activity, activityError, sources, onReview, onCommit, onFiles, onTerminal, onHost, branchPrefix, onOpenGitSettings, onCheckoutBlocked, collapsedSections, onToggleSection, showEmptySources = false, actions, compoundGit, sideChats = [], todos, jobs, taskLocation }: EnvironmentCardProps) {
+export function EnvironmentCard({ hostName, cwd, local, connected, workspace, activity, activityError, sources, onReview, onCommit, onFiles, onTerminal, onHost, branchPrefix, onOpenGitSettings, onCheckoutBlocked, collapsedSections, onToggleSection, showEmptySources = false, actions, compoundGit, sideChats = [], todos, jobs, taskLocation, onOpenSubagents }: EnvironmentCardProps) {
   const [, redraw] = useReducer(value => value + 1, 0);
   const [expandedSources, setExpandedSources] = useState(false);
   useEffect(() => workspace.subscribe(redraw), [workspace]);
@@ -52,7 +53,7 @@ export function EnvironmentCard({ hostName, cwd, local, connected, workspace, ac
     </SummarySection>
     {sideChats.length > 0 && <SummarySection {...section("side-chats")} title="Side chats" count={sideChats.length}>{sideChats.map(chat => <button className="environment-row" key={chat.id} onClick={chat.onOpen}><Icon name="sideChat"/><span>{chat.title}</span>{chat.unread && <i className="dock-unread" aria-label="Unread answer"/>}</button>)}</SummarySection>}
     {todos && <SummarySection {...section("todos")} title="Todos" count={todos.count}>{todos.content}</SummarySection>}
-    <NativeActivity activity={activity} error={activityError} collapsedSections={collapsedSections} onToggleSection={onToggleSection}/>
+    <NativeActivity activity={activity} error={activityError} collapsedSections={collapsedSections} onToggleSection={onToggleSection} onOpenSubagents={onOpenSubagents}/>
     {jobs && <SummarySection {...section("jobs")} title="Jobs" count={jobs.count}>{jobs.content}</SummarySection>}
     {(sources.length > 0 || showEmptySources) && <SummarySection {...section("sources")} title="Sources" count={sources.length} actions={<button type="button" className="icon-button" aria-label="Browse source files" title="Browse files" onClick={onFiles}><Icon name="plus"/></button>}>
       {shownSources.length ? <ul className="environment-sources">{shownSources.map(source => <li key={source.id}><button onClick={source.onOpen} title={source.label}><Icon name={source.kind === "image" ? "compose" : "folder"}/><span>{source.label}</span></button></li>)}</ul> : <p className="environment-note">No consumed sources are available.</p>}
@@ -71,15 +72,14 @@ function SummarySection({ sectionKey, title, count, collapsed, onToggle, actions
   </section>;
 }
 
-function NativeActivity({ activity, error, collapsedSections, onToggleSection }: Pick<EnvironmentCardProps, "activity" | "collapsedSections" | "onToggleSection"> & { error?: string }) {
-  const section = (key: EnvironmentSectionKey) => ({ sectionKey: key, collapsed: collapsedSections.includes(key), onToggle: () => onToggleSection(key) });
-  if (error) return <SummarySection {...section("subagents")} title="Subagents"><p className="environment-note" role="alert">{error}</p></SummarySection>;
-  if (!activity) return null;
-  const { agents } = activity;
-  const agentRows = agents.availability === "available" ? agents.value : [];
-  return <>
-    {(agents.availability !== "available" || agentRows.length > 0) && <SummarySection {...section("subagents")} title="Subagents" count={agentRows.length}>
-      {agents.availability !== "available" ? <p className="environment-note" role="status">{agents.reason}</p> : <ul className="environment-native-list">{agentRows.map(agent => <li key={agent.id}><span>{agent.displayName} · {agent.status}</span><code>{agent.id}</code></li>)}</ul>}
-    </SummarySection>}
-  </>;
+function NativeActivity({ activity, error, collapsedSections, onToggleSection, onOpenSubagents }: Pick<EnvironmentCardProps, "activity" | "collapsedSections" | "onToggleSection" | "onOpenSubagents"> & { error?: string }) {
+  if (!onOpenSubagents && !activity && !error) return null;
+  const agents = activity?.agents, rows = agents?.availability === "available" ? agents.value : [];
+  return <SummarySection sectionKey="subagents" title="Subagents" count={rows.length} collapsed={collapsedSections.includes("subagents")} onToggle={() => onToggleSection("subagents")}
+    actions={onOpenSubagents && <button type="button" className="icon-button" aria-label="Open subagents" title="Open subagents" onClick={onOpenSubagents}><Icon name="sideChat"/></button>}>
+    {error ? <p className="environment-note" role="alert">{error}</p> : !agents ? <p className="environment-note">Loading native subagents…</p>
+      : agents.availability !== "available" ? <p className="environment-note" role="status">{agents.reason}</p>
+      : rows.length ? <button type="button" className="environment-row" onClick={onOpenSubagents} disabled={!onOpenSubagents}><Icon name="sideChat"/><span>{rows.filter(row => row.running).length} active · {rows.filter(row => !row.running).length} inactive</span></button>
+      : <p className="environment-note">No subagents in this native session.</p>}
+  </SummarySection>;
 }

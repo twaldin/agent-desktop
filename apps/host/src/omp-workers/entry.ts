@@ -8,6 +8,7 @@ import { parsePlanDecisionPreparation } from "../omp/plan-decision";
 import { parsePlanControlRequest, parsePlanControlResult, parseSessionPlan } from "../../../../packages/shared/src/session-plan";
 import { parseSessionTodos, parseTodoCommandId, parseTodoMutationRequest, parseTodoMutationResult, type TodoMutationRequest } from "../../../../packages/shared/src/session-todos";
 import { parseSessionJobsRequest, parseSessionJobsResult } from "../../../../packages/shared/src/session-jobs";
+import { parseSessionSubagentsRequest, parseSessionSubagentsResult, assertSessionSubagentsResultMatches } from "../../../../packages/shared/src/session-subagents";
 import { WorkerBrowserEvaluationChannels } from "../omp-browser/evaluation";
 import { WorkerBrowserObservations } from "../omp-browser/observation";
 import { WorkerBrowserReservations } from "../omp-browser/reservation";
@@ -561,6 +562,15 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
           if (input.action === "cancel") throw Object.assign(new Error("The native cancellation result could not be confirmed; inspect the original owner before acting again.", { cause }), { code: "OUTCOME_UNKNOWN" });
           throw cause;
         }
+        break;
+      }
+      case "nativeSubagents": {
+        const input = parseSessionSubagentsRequest(message.args.request);
+        const active = requireSession();
+        const value = parseSessionSubagentsResult(await active.nativeSubagents(input));
+        if (requireSession() !== active) throw new Error("The original native Subagents worker changed during the read.");
+        assertSessionSubagentsResultMatches(input, value);
+        respond(true, value);
         break;
       }
       case "mutateGoal": {

@@ -37,7 +37,7 @@ const horizontal:readonly PhysicalPane[]=["left","right"];
 const destinations:Record<DockTabKind,readonly PhysicalPane[]>={
   "terminal":["left","right","bottom"],"browser":horizontal,"review":horizontal,
   "file":horizontal,"files":horizontal,"skill-file":horizontal,"side-chat":horizontal,
-  "goal":horizontal,"worktrees":horizontal,"mcp-app":horizontal,
+  "goal":horizontal,"subagents":horizontal,"worktrees":horizontal,"mcp-app":horizontal,
 };
 export function taskDropDestinations(snapshot:MainTaskSnapshot,chat:MainChatTarget,target:MainTaskTarget):readonly PhysicalPane[] {
   if(target.kind === "chat") return sameMainTask(chat,target) && mainTaskTargets(snapshot,chat).length>1 ? horizontal : [];

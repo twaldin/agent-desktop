@@ -244,7 +244,7 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
       !(item.target === "host" || /^(session|project):[A-Za-z0-9_-]{1,200}$/.test(item.target) || standalonePath !== undefined || draftId !== undefined) ||
       typeof item.title !== "string" ||
       item.title.length > 1000 ||
-      !["review", "file", "files", "worktrees", "terminal", "browser", "goal", "side-chat", "skill-file", "mcp-app"].includes(
+      !["review", "file", "files", "worktrees", "terminal", "browser", "goal", "subagents", "side-chat", "skill-file", "mcp-app"].includes(
         String(item.kind),
       ) ||
       (item.terminalId !== undefined && !id(item.terminalId))
@@ -333,7 +333,7 @@ export function parseDockSnapshot(value: unknown): WindowViewState["dock"] {
       tab.id !== dockTabId(tab) ||
       seen.has(tab.id) ||
       (tab.kind === "terminal") !== Boolean(tab.terminalId) ||
-      (tab.kind === "side-chat" && !tab.target.startsWith("session:")) ||
+      ((tab.kind === "side-chat" || tab.kind === "subagents") && !tab.target.startsWith("session:")) ||
       (tab.browserTarget !== undefined &&
         (tab.kind !== "browser" || !tab.target.startsWith("session:")))
     )

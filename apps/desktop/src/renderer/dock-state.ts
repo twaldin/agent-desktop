@@ -6,6 +6,7 @@ export type DockTabKind =
   | "mcp-app"
   | "side-chat"
   | "goal"
+  | "subagents"
   | "review"
   | "skill-file"
   | "file"

@@ -22,6 +22,8 @@ import { parsePlanControlRequest, parsePlanDocumentReadRequest, parsePlanMutatio
 import type { PlanDocumentSection } from "../../../../packages/shared/src/plan-document";
 import { NativeSessionTodos } from "./session-todos";
 import { NativeSessionJobs } from "./session-jobs";
+import { NativeSessionSubagents } from "./session-subagents";
+import type { SessionSubagentsRequest, SessionSubagentsResult } from "../../../../packages/shared/src/session-subagents";
 import { NativeSessionRecovery } from "./session-recovery";
 import type { SessionJobsRequest, SessionJobsResult } from "../../../../packages/shared/src/session-jobs";
 import { parseTodoCommandId, parseTodoMutationRequest, type SessionTodos, type TodoMutationRequest, type TodoMutationResult } from "../../../../packages/shared/src/session-todos";
@@ -145,6 +147,7 @@ export interface OmpSession {
   flushSession(): Promise<{ sessionId: string; sessionFile: string; cwd: string }>;
   getSessionActivity(): NativeSessionActivity;
   nativeJobs(request: SessionJobsRequest): SessionJobsResult;
+  nativeSubagents(request: SessionSubagentsRequest): Promise<SessionSubagentsResult>;
   refreshGoalUsage(): Promise<void>;
   mutateGoal(request: GoalMutationRequest): Promise<NativeGoalActivity | null>;
   getGoalContinuationEligibility(): GoalContinuationEligibility;
@@ -637,6 +640,7 @@ export class OmpRuntime {
         if (!disposed && promotionState === "idle") for (const listener of listeners) listener({ type: "turn_review_changed" });
       });
       const nativeJobs = new NativeSessionJobs(session, assertSessionActive, manager.getSessionId());
+      const nativeSubagents = new NativeSessionSubagents(session, assertSessionActive, captureSessionId);
       let applyFreshProviderIdentity = () => {};
       const nativeRecovery = new NativeSessionRecovery(session, manager, assertSessionActive, () => applyFreshProviderIdentity());
       const mcpFiles = new McpFileResources(manager.getCwd());
@@ -860,15 +864,11 @@ export class OmpRuntime {
               ...(nativeJobs.delivery.nextRetryAt === undefined ? {} : { nextRetryAt: nativeJobs.delivery.nextRetryAt }),
               pendingJobIds: nativeJobs.delivery.pendingJobIds.slice(0, 100).map(id => id.slice(0, 200)) },
           } } : { availability: "unavailable" as const, reason: "This native session has no asynchronous job manager." };
-          const agents = agentRegistry.list().filter(ref => ref.kind !== "main").slice(0, 100).map(ref => ({
-            id: ref.id.slice(0, 200), displayName: ref.displayName.slice(0, 500), status: ref.status, running: agentRegistry.isRunning(ref),
-            ...(ref.parentId ? { parentId: ref.parentId.slice(0, 200) } : {}), createdAt: ref.createdAt, lastActivity: ref.lastActivity,
-            ...(ref.activity ? { activity: ref.activity.slice(0, 500) } : {}),
-          }));
-          return { goal: { availability: "available", value: goal }, jobs, agents: { availability: "available", value: agents },
+          return { goal: { availability: "available", value: goal }, jobs, agents: nativeSubagents.activity(),
             sources: { availability: "unsupported", reason: "OMP 18.1.10 does not expose a stable consumed-source registry for this session." } };
         },
         nativeJobs: request => nativeJobs.request(request),
+        nativeSubagents: request => nativeSubagents.request(request),
         refreshGoalUsage: async () => { assertSessionActive(); await nativeGoalController.refreshUsage(); },
         getGoalContinuationEligibility: () => nativeGoalController.eligibility(),
         startGoalContinuation: expectedGoalId => {

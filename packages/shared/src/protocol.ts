@@ -71,6 +71,7 @@ export * from "./attachments";
 export * from "./composer-actions";
 export * from "./session-activity";
 export * from "./session-jobs";
+export * from "./session-subagents";
 export * from "./browser";
 export * from "./browser-frame";
 export * from "./browser-control";
@@ -516,6 +517,7 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   getExtensionUi?(sessionId: string, hostId?: string): Promise<import("./extension-ui").ExtensionUiResult | null>;
   getSessionActivity?(sessionId: string, hostId?: string): Promise<SessionActivitySnapshot | null>;
   sessionJobs?(sessionId: string, request: import("./session-jobs").SessionJobsRequest, hostId: string): Promise<import("./session-jobs").SessionJobsEnvelope>;
+  sessionSubagents?(sessionId: string, request: import("./session-subagents").SessionSubagentsRequest, hostId: string): Promise<import("./session-subagents").SessionSubagentsEnvelope>;
   mcpOwner?: import("./mcp-owner").McpOwnerBridge;
   sessionMcpApp?(sessionId: string, request: import("./session-mcp-app").NativeMcpAppRequest, hostId: string): Promise<import("./session-mcp-app").NativeMcpAppResponse>;
   readSessionMcpResource?(sessionId: string, request: import("./session-mcp-resource").NativeSessionMcpResourceRequest, hostId?: string): Promise<import("./session-mcp-resource").NativeSessionMcpResourceResult>;

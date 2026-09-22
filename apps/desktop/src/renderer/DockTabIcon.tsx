@@ -8,5 +8,5 @@ import type { DockTab } from "./dock-state";
 export function DockTabIcon({tab}:{tab:DockTab}) {
   if (tab.mcpApp?.icon) return <McpAppIcon icon={tab.mcpApp.icon}/>;
   return tab.kind === "file" ? <FileTypeIcon path={tab.filePath}/> : tab.kind === "goal" ? <GoalIcon name="goal" className="icon"/>
-    : <Icon name={tab.kind === "side-chat" ? "sideChat" : tab.kind === "browser" ? "globe" : tab.kind === "terminal" ? "terminal" : tab.kind === "review" ? "compose" : "folder"}/>;
+    : <Icon name={tab.kind === "side-chat" || tab.kind === "subagents" ? "sideChat" : tab.kind === "browser" ? "globe" : tab.kind === "terminal" ? "terminal" : tab.kind === "review" ? "compose" : "folder"}/>;
 }

@@ -194,6 +194,7 @@ const bridge: DesktopBridge = {
   getExtensionUi: (sessionId, hostId) => ipcRenderer.invoke("host:extension-ui", sessionId, hostId),
   getSessionActivity: (sessionId, hostId) => ipcRenderer.invoke("host:session-activity", sessionId, hostId),
   sessionJobs: (sessionId, request, hostId) => ipcRenderer.invoke("host:session-jobs", sessionId, request, hostId),
+  sessionSubagents: (sessionId, request, hostId) => ipcRenderer.invoke("host:session-subagents", sessionId, request, hostId),
   mcpOwner: { request: (hostId, request) => ipcRenderer.invoke("host:mcp-owner", hostId, request) },
   sessionMcpApp: (sessionId, request, hostId) => ipcRenderer.invoke("host:mcp-app", sessionId, request, hostId),
   readSessionMcpResource: (sessionId, request, hostId) => ipcRenderer.invoke("host:mcp-resource", sessionId, request, hostId),
