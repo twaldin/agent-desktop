@@ -66,6 +66,20 @@ describe("broad transcript Markdown selection", () => {
     expect(payload?.htmlText).not.toContain("Footnotes"); expect(payload?.plainText).not.toContain("Footnotes");
     expect(payload?.htmlText).toContain("<p>detail</p>");
   });
+  test("a selected diagram copies its source instead of preview labels or active SVG", () => {
+    const source = '```mermaid\nflowchart LR\nA["<script>never()</script>"] --> B\n```';
+    const diagram = () => element("div", [
+      element("button", [text("Copy mermaid")], { "data-markdown-copy": "exclude" }),
+      element("img", [], { src: "data:image/svg+xml,<svg/>", alt: "Mermaid diagram" }),
+    ], { "data-markdown-copy": "code-block", "data-markdown-copy-text": source });
+    const before = element("p", [text("Before")]), after = element("p", [text("After")]);
+    const root = element("div", [before, diagram(), after]);
+    const copied = fragment(element("p", [text("Before")]), diagram(), element("p", [text("After")]));
+    expect(transcriptMarkdownSelection(root as unknown as HTMLElement, selection(root, copied, before, after))).toEqual({
+      plainText: `Before\n${source}\nAfter`,
+      htmlText: '<p>Before</p><pre dir="ltr"><code>```mermaid\nflowchart LR\nA["&lt;script&gt;never()&lt;/script&gt;"] --&gt; B\n```</code></pre><p>After</p>',
+    });
+  });
   test("declines collapsed, outside, and selections without code", () => {
     const paragraph = element("p", [text("only text")]), root = element("div", [paragraph]), copied = fragment(element("p", [text("only text")]));
     const plain = selection(root, copied, paragraph, paragraph, false);

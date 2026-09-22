@@ -1,6 +1,8 @@
 import { FileReferenceControl } from "./TranscriptFileReference";
 import { TranscriptMarkdownImage } from "./TranscriptMarkdownImage";
 import { TranscriptMarkdownTable } from "./TranscriptMarkdownTable";
+import { TranscriptMermaid, TranscriptSvg } from "./TranscriptMarkdownDiagram";
+import { isMermaidDiagram, isSvgDiagram } from "./transcript-diagram";
 import { createTranscriptImageResolver } from "./transcript-image-source";
 import { createContext, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import Markdown, { type Components, type ExtraProps } from "react-markdown";
@@ -17,6 +19,7 @@ import { markdownScope, MarkdownViewState } from "./markdown-state";
 import { resolveTranscriptLink, type TranscriptLinkActions } from "./transcript-links";
 import { SelectableCode } from "./code-selection";
 import "./markdown.css";
+import "./transcript-markdown-diagram.css";
 
 export const TranscriptMarkdownContext = createContext<{ actions?: TranscriptLinkActions; views?: MarkdownViewState }>({});
 const MarkdownBlockContext = createContext<{ key: string; scope: string; source: string; allowWideBlocks: boolean; streaming: boolean; root: { current: HTMLDivElement | null }; views: MarkdownViewState }>({ key: "", scope: "", source: "", allowWideBlocks: false, streaming: false, root: { current: null }, views: new MarkdownViewState() });
@@ -54,28 +57,30 @@ function CodeBlock({ node }: ExtraProps) {
   const displayed = codeNode ? textOf(codeNode) : "", code = displayed.endsWith("\n") ? displayed.slice(0, -1) : displayed;
   const key = `${context.key}:code:${node?.position?.start.offset ?? 0}`;
   const raw = context.source.slice(node?.position?.start.offset ?? 0, node?.position?.end.offset ?? 0);
-  return <TranscriptCode code={code} language={language} blockKey={key} open={context.streaming && codeFenceOpen(raw, code)} views={context.views}/>;
+  const open = context.streaming && codeFenceOpen(raw, code);
+  if (isMermaidDiagram(language, open)) return <TranscriptMermaid key={key} code={code} open={open} allowWideBlocks={context.allowWideBlocks} fallback={<TranscriptCode code={code} language="plaintext" title={language} blockKey={key} views={context.views}/>}/>;
+  return <TranscriptCode key={key} code={code} language={language} blockKey={key} open={open} views={context.views} preview={isSvgDiagram(code, language) ? <TranscriptSvg code={code}/> : undefined}/>;
 }
 /** Native output is literal text, never Markdown; the same code surface owns
  * selection, wrapping, highlighting and acknowledged clipboard writes. */
-export function TranscriptCode({ code, language = "plaintext", blockKey, open = false, output = false, title: suppliedTitle, copyAction, views: suppliedViews }: { code: string; language?: string; blockKey: string; open?: boolean; output?: boolean; title?: string; copyAction?: string; views?: MarkdownViewState }) {
+export function TranscriptCode({ code, language = "plaintext", blockKey, open = false, output = false, title: suppliedTitle, copyAction, views: suppliedViews, preview }: { code: string; language?: string; blockKey: string; open?: boolean; output?: boolean; title?: string; copyAction?: string; views?: MarkdownViewState; preview?: ReactNode }) {
   const parent = useContext(TranscriptMarkdownContext), localViews = useMemo(() => new MarkdownViewState(), []);
   const views = suppliedViews ?? parent.views ?? localViews, [, redraw] = useState(0), element = useRef<HTMLDivElement>(null);
   const wrapped = views.wrapped(blockKey), title = suppliedTitle ?? codeLanguageLabel(language);
-  const {highlighted, tail} = useCodeHighlight(code, open && !language ? "plaintext" : language, element);
+  const {highlighted, tail} = useCodeHighlight(preview === undefined ? code : "", open && !language ? "plaintext" : language, element);
   const copy = useCodeCopy(code), copyLabel = copy.state === "copied" ? "Copied" : copy.state === "failed" ? "Copy failed · retry" : copyAction ?? (output ? "Copy output" : "Copy code");
   const wrapLabel = wrapped ? "Disable word wrap" : "Enable word wrap";
   const tokens = useMemo(() => highlighted.kind === "highlighted" ? syntax(highlighted.tree.children) : null, [highlighted]);
-  return <div ref={element} className={`markdown-code-block${output ? " transcript-code-output" : ""}`} data-code-key={blockKey} data-code-open={open} data-highlighted={highlighted.kind === "highlighted"} data-markdown-copy="code-block">
+  return <div ref={element} className={`markdown-code-block${output ? " transcript-code-output" : ""}`} data-code-key={blockKey} data-code-open={open} data-highlighted={highlighted.kind === "highlighted"} data-markdown-copy="code-block" data-markdown-copy-text={preview === undefined ? undefined : code}>
     <div className="markdown-code-toolbar" data-markdown-copy="exclude">{title && !output && <TranscriptCodeIcon name="language_marker"/>}<span className="markdown-code-language">{title}</span><div>
-      <button type="button" aria-label={wrapLabel} title={wrapLabel} aria-pressed={wrapped} onClick={() => { views.setWrapped(blockKey, !wrapped); redraw(value => value + 1); }}><TranscriptCodeIcon name={wrapped ? "wrap_on" : "wrap_off"}/></button>
+      {preview === undefined && <button type="button" aria-label={wrapLabel} title={wrapLabel} aria-pressed={wrapped} onClick={() => { views.setWrapped(blockKey, !wrapped); redraw(value => value + 1); }}><TranscriptCodeIcon name={wrapped ? "wrap_on" : "wrap_off"}/></button>}
       {(!open || output) && <button type="button" className="markdown-code-copy" aria-label={copyLabel} title={copyLabel} aria-busy={copy.state === "pending"} disabled={copy.state === "pending"} onClick={() => void copy.copy()}><TranscriptCodeIcon name={copy.state === "copied" ? "copied" : "copy"}/></button>}
     </div></div>
-    <pre className={wrapped ? "wrapped" : undefined} tabIndex={0} aria-label={output ? title || "Output" : `${title || "Plain text"} code`} onCopy={event => {
+    {preview === undefined ? <pre className={wrapped ? "wrapped" : undefined} tabIndex={0} aria-label={output ? title || "Output" : `${title || "Plain text"} code`} onCopy={event => {
       const selection = event.currentTarget.ownerDocument.getSelection();
       if (!selection || selection.isCollapsed || !selection.anchorNode || !selection.focusNode || !event.currentTarget.contains(selection.anchorNode) || !event.currentTarget.contains(selection.focusNode)) return;
       event.clipboardData.setData("text/plain", selection.toString()); event.preventDefault(); event.stopPropagation();
-    }}><SelectableCode text={code}>{tokens ? <>{tokens}{tail}</> : code}</SelectableCode></pre>
+    }}><SelectableCode text={code}>{tokens ? <>{tokens}{tail}</> : code}</SelectableCode></pre> : preview}
     {copy.error && <p className="markdown-code-copy-error" role="alert" data-markdown-copy="exclude">{copy.error} <button type="button" onClick={() => void copy.copy()}>Retry</button></p>}
   </div>;
 }

@@ -30,6 +30,8 @@ function containsCodeBlock(node: Node): boolean {
   return marked(node, "code-block") || childNodes(node).some(containsCodeBlock);
 }
 function codeText(node: Node): string {
+  const source = attribute(node, "data-markdown-copy-text");
+  if (source !== null) return source;
   const pre = descendant(node, child => elementName(child) === "pre");
   const code = pre && descendant(pre, child => elementName(child) === "code");
   return code?.textContent ?? pre?.textContent ?? "";
