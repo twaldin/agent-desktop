@@ -1647,7 +1647,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         const terminalResponse = await terminalsHttp!.handle(request);
         if (terminalResponse) { terminalResponse.headers.set("Cache-Control", "no-store"); return terminalResponse; }
         if (url.pathname.startsWith("/v2/terminals/")) {
-          if (!nativeTerminalsHttp) return Response.json({ error: { code: "NATIVE_TERMINAL_BUNDLE_MISSING", message: "The pinned native terminal bundle is missing from this host. Build or reinstall its native runtime." } }, { status: 503, headers: { "Cache-Control": "no-store" } });
+          if (!nativeTerminalsHttp) return Response.json({ error: { code: "NATIVE_TERMINAL_BUNDLE_MISSING", message: "The pinned native terminal bundle is missing from this host. Build or reinstall its native runtime." } }, { status: 503, headers: { "Cache-Control": "no-store", [WORKSPACE_OWNER_HEADER]: store.host.id } });
           const creationResponse = await terminalCreationHttp?.handle(request);
           if (creationResponse) return creationResponse;
           const nativeResponse = await nativeTerminalsHttp.handle(request);
