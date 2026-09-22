@@ -316,12 +316,13 @@ test("failed preserved shutdown keeps its Store and lease until an explicit retr
   );
   const log = path.join(root, "worker.jsonl"),
     workerPath = path.join(root, "worker.ts"),
+    releaseStarted = path.join(root, "release-started"),
     releaseFinished = path.join(root, "release-finished");
   await writeFile(
     workerPath,
     `import {appendFileSync,existsSync} from "node:fs";
 import {WORKER_PROTOCOL_VERSION} from ${JSON.stringify(new URL("./omp-workers/protocol.ts", import.meta.url).href)};
-const log=${JSON.stringify(log)},releaseFinished=${JSON.stringify(releaseFinished)};let binding;let disposeId;let resetResponses=0;
+const log=${JSON.stringify(log)},releaseStarted=${JSON.stringify(releaseStarted)},releaseFinished=${JSON.stringify(releaseFinished)};let binding;let disposeId;let resetResponses=0;
 const pass={passId:"pass-root",nativeSessionId:"native-root",trigger:"blocked",source:"blocked",startedAtMs:1,provider:"openai-codex",modelId:"gpt-5-codex",policy:{autoRedeem:"no",minBlockedMinutes:30,keepCredits:1,salvageHorizonHours:24}};
 const record=(event,value)=>appendFileSync(log,JSON.stringify({event,value})+"\\n");
 const sendReset=(requestId,event,evidence)=>process.send({type:"resetPolicyRequest",binding,requestId,nativeSessionId:pass.nativeSessionId,passId:pass.passId,operation:{kind:"checkpoint",event},...(evidence?{evidence}:{})});
@@ -338,7 +339,7 @@ process.on("message",message=>{void (async()=>{
     if(init.mode==="create"){
       const cwd=init.options.cwd;binding={workerEpoch:init.resetPolicy.workerEpoch,rootSessionId:"reset-policy-retry"};
       process.send({type:"response",id:message.id,ok:true,snapshot:{revision:1,id:"reset-policy-retry",sessionFile:cwd+"/session.jsonl",cwd,model:null,isStreaming:false,hasPostPromptWork:false,createdAt:1,activity:{goal:{availability:"unsupported",reason:"fixture"},agents:{availability:"unsupported",reason:"fixture"},jobs:{availability:"unsupported",reason:"fixture"},sources:{availability:"unsupported",reason:"fixture"}}}});
-      setTimeout(()=>sendReset(1,{phase:"started",pass},{kind:"source",selectionRevision:"e".repeat(64),policyRevision:"f".repeat(64)}),5);return;
+      const gate=setInterval(()=>{if(!existsSync(releaseStarted))return;clearInterval(gate);sendReset(1,{phase:"started",pass},{kind:"source",selectionRevision:"e".repeat(64),policyRevision:"f".repeat(64)});},5);return;
     }
     process.send({type:"response",id:message.id,ok:true});return;
   }
@@ -365,6 +366,8 @@ process.send({type:"ready",version:WORKER_PROTOCOL_VERSION});
     ok: true,
     value: { id: "reset-policy-retry" },
   });
+  // Session creation attaches the reset owner; elapsed time is not that acknowledgement.
+  await writeFile(releaseStarted, "release\n");
   for (let turns = 0; turns < 50; turns++) {
     if (
       await readFile(log, "utf8").then(
@@ -384,6 +387,12 @@ process.send({type:"ready",version:WORKER_PROTOCOL_VERSION});
     return originalDispose.call(this, options);
   };
   try {
+    const initialResponses = (await readFile(log, "utf8")).trim().split("\n")
+      .map(line => JSON.parse(line) as { event: string; value?: unknown })
+      .filter(event => event.event === "reset-response");
+    expect(initialResponses.map(event => event.value)).toEqual([
+      { ok: true, result: { kind: "checkpointed" } },
+    ]);
     const first = host.stop(),
       shared = host.stop();
     const failures = await Promise.allSettled([first, shared]);
