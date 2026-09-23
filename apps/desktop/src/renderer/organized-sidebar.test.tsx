@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { createElement, Fragment, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
@@ -10,8 +10,20 @@ import type { HostOption } from "./host-catalog";
 import { PROJECT_APPEARANCE_COLORS, PROJECT_APPEARANCE_ICONS } from "../../../../packages/shared/src/preferences";
 import { ProjectMarkerPicker } from "./ProjectMarkerPicker";
 
-(globalThis as { window?: unknown; document?: unknown }).window = { innerWidth: 1_024, innerHeight: 768 };
-(globalThis as { document?: unknown }).document = { body: {} };
+let previousWindow: PropertyDescriptor | undefined;
+let previousDocument: PropertyDescriptor | undefined;
+beforeEach(() => {
+  previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { innerWidth: 1_024, innerHeight: 768 } });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: { body: {} } });
+});
+afterEach(() => {
+  if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+  else Reflect.deleteProperty(globalThis, "window");
+  if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument);
+  else Reflect.deleteProperty(globalThis, "document");
+});
 
 // Whole maintained component with controlled React hook storage. Events below are
 // the actual element callbacks; DOM effects, pointer timing and pixels need Electron.
