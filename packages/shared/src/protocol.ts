@@ -1,3 +1,4 @@
+export * from "./session-import";
 export * from "./goal-composer";
 export * from "./native-dap";
 export * from "./native-lsp";
@@ -273,6 +274,7 @@ export interface HostState {
   wholeFiles?: { commandVersion: 7; ordinaryPrompt: true; maxFiles: number; inlineMentions?: { commandVersion: 8; repeatedSources?: { commandVersion: 9 } } };
   gitSubmissions?: { commandVersion: 10 };
   sessionSearch?: { version: 1 };
+  sessionImports?: { inspection: typeof import("./session-import").SESSION_IMPORT_INSPECTION_CAPABILITY; admission?: typeof import("./session-import").SESSION_IMPORT_ADMISSION_CAPABILITY };
   queuedMessages?: { version: 1; submissions?: { version: 1; commandVersion: 13; images?: { commandVersion: 17 } } };
   forceTool?: { version: 1; commandVersion: 18 };
   plan?: { version: 1; commandVersion: 19; document?: { version: 1; commandVersion: 20 } };
@@ -507,6 +509,12 @@ export interface DesktopBridge extends TerminalBridge, Partial<NativeTerminalBri
   command(envelope: CommandEnvelope, hostId?: string): Promise<CommandResult>;
   searchSessions?(input: SessionSearchRequest, hostId: string, requestId?: string): Promise<SessionSearchResult>;
   cancelSessionSearch?(requestId: string, hostId: string): Promise<void>;
+  listNativeSessionImports?(hostId: string, requestId: string): Promise<import("./session-import").NativeImportListing>;
+  inspectNativeSessionImport?(hostId: string, candidateId: string, requestId: string): Promise<import("./session-import").NativeImportInspectionReply>;
+  cancelNativeSessionImportRead?(hostId: string, requestId: string): Promise<void>;
+  prepareNativeSessionImport?(hostId:string,input:{candidateId:string;revision:string},requestId:string):Promise<import("./session-import").NativeImportPreparation>;
+  admitNativeSessionImport?(hostId:string,input:{commandId:string;preparationId:string}):Promise<import("./session-import").NativeImportOutcome>;
+  getNativeSessionImportOutcome?(hostId:string,commandId:string,requestId:string):Promise<import("./session-import").NativeImportOutcome>;
   getMessages(sessionId: string, hostId?: string): Promise<TranscriptMessage[]>;
   getQueuedMessages?(sessionId: string, hostId: string): Promise<import("./queued-messages").NativeQueuedMessagesResponse>;
   getTaskLocation?(sessionId: string, hostId?: string): Promise<import("./task-location").TaskLocationSnapshot>;

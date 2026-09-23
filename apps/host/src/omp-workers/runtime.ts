@@ -36,7 +36,7 @@ import { copyNativeSelectedTextInput } from "../omp/selected-text";
 import { copyNativeWholeFileInput } from "../omp/whole-file";
 import { OmpPromptAdmissionError } from "../omp/prompt";
 import type { WorkerEventListener } from "./events";
-import { WORKER_PROTOCOL_VERSION, remoteError, type ChildMessage, type ParentMessage, type SessionSnapshot, type WorkerInit, type WorkerOperation, type CommitGenerationInput, type NativeSessionForkInput, type NativeSessionForkResult } from "./protocol";
+import { WORKER_PROTOCOL_VERSION, assertOriginalAdmissionReceipt, originalAdmissionCode, parseOriginalAdmissionRequest, remoteError, OriginalAdmissionOutcomeUnknown, OriginalAdmissionRefusal, type ChildMessage, type OriginalAdmissionReceipt, type OriginalAdmissionRequest, type ParentMessage, type SessionSnapshot, type WorkerInit, type WorkerOperation, type CommitGenerationInput, type NativeSessionForkInput, type NativeSessionForkResult } from "./protocol";
 import { localEnvironmentForWorker, type LocalEnvironmentWorkerEnvironment } from "../local-environments/environment";
 import { assertBundledRuntime, getBundledRuntimeRoot } from "../runtime-ownership";
 import type { NativeBtwSnapshot, NativeBtwStart } from "../../../../packages/shared/src/btw";
@@ -293,6 +293,8 @@ export class WorkerClient {
 
   get pid(): number { return this.#pid || this.#process?.pid || 0; }
   get reconnectEndpoint(): WorkerReconnectEndpoint|undefined{return this.#reconnectEndpoint;}
+  /** True from the first close/handoff call, before the child has exited. */
+  get closing(): boolean { return this.#closing; }
 
   prepareResetPolicy(workerEpoch: string): void {
     if (this.#reconnectEndpoint || this.#resetPolicyExpectedEpoch || this.#resetPolicyOwner)
@@ -632,7 +634,9 @@ export class WorkerClient {
       else {
         const error = new Error(message.error?.message ?? "OMP worker operation failed");
         error.name = message.error?.name ?? "Error";
-        if (message.error?.code === "OUTCOME_UNKNOWN" || message.error?.code === "PLAN_REJECTED" || message.error?.code === "TODOS_REJECTED" || message.error?.code === "TREE_REJECTED" || message.error?.code === "PROCESSES_REJECTED") Object.assign(error, { code: message.error.code });
+        if (message.error?.code === "OUTCOME_UNKNOWN" || message.error?.code === "ORIGINAL_SESSION_NOT_SUBMITTED" || message.error?.code === "PLAN_REJECTED" || message.error?.code === "TODOS_REJECTED" || message.error?.code === "TREE_REJECTED" || message.error?.code === "PROCESSES_REJECTED") Object.assign(error, { code: message.error.code });
+        // A native original refusal is only actionable with its exact reason.
+        if (typeof message.error?.reason === "string" && message.error.reason) Object.assign(error, { reason: message.error.reason });
         // A remote unclassified failure can occur while constructing the reply
         // after native persistence. Only an explicit refusal proves no effect.
         if (pending.uncertainTransport === "tree-mutation" && message.error?.code !== "TREE_REJECTED")
@@ -1035,6 +1039,11 @@ export class WorkerRuntime {
   #clients = new Set<WorkerClient>();
   #setups = new Set<Promise<unknown>>();
   #openFiles = new Set<string>();
+  /** Only handles this runtime admitted through openOriginal; an ordinary open
+   * is never retained here. Identity-keyed, so a disposed handle cannot be
+   * confused with a later admission of the same original. */
+  #originalHandles = new WeakMap<WorkerSession, WorkerClient>();
+  #originalClients = new WeakSet<WorkerClient>();
   #discovery?: Promise<WorkerClient>;
   #disposed = false;
   #disposeCall?: Promise<void>;
@@ -1053,7 +1062,7 @@ export class WorkerRuntime {
   async #spawn(init: WorkerInit, onEvent?: WorkerEventListener, localEnvironment?: LocalEnvironmentWorkerEnvironment, signal?: AbortSignal): Promise<WorkerClient> {
     this.#assertActive();
     signal?.throwIfAborted();
-    const resetPolicyWorkerEpoch = this.#options.createResetPolicyOwner && (init.mode === "create" || init.mode === "open")
+    const resetPolicyWorkerEpoch = this.#options.createResetPolicyOwner && (init.mode === "create" || init.mode === "open" || init.mode === "open-original")
       ? crypto.randomUUID() : undefined;
     if (resetPolicyWorkerEpoch) init = { ...init, resetPolicy: { workerEpoch: resetPolicyWorkerEpoch } };
     const worktreeRoot = localEnvironment?.worktreeRoot;
@@ -1073,6 +1082,9 @@ export class WorkerRuntime {
       init = { ...init, options: { ...init.options, cwd: startupDirectory } };
     } else if (init.mode === "browser" || init.mode === "mcp-owner") startupDirectory = init.owner.cwd;
     else if (init.mode === "open") startupDirectory = init.options.expectedIdentity?.directory;
+    // The enrolled original keeps its own canonical directory; there is no
+    // fallback launch directory for an admitted original.
+    else if (init.mode === "open-original") startupDirectory = await requireDirectory(init.options.binding.canonicalCwd);
     if (worktreeRoot && startupDirectory && await requireDirectory(worktreeRoot) !== startupDirectory) {
       throw new Error("OMP worker directory does not match its prepared worktree environment");
     }
@@ -1081,16 +1093,25 @@ export class WorkerRuntime {
     const client = new WorkerClient(options, environment, startupDirectory);
     if (resetPolicyWorkerEpoch) client.prepareResetPolicy(resetPolicyWorkerEpoch);
     this.#clients.add(client);
+    if (init.mode === "open-original") this.#originalClients.add(client);
     const cancel = () => { void client.close().catch(() => {}); };
     signal?.addEventListener("abort", cancel, { once: true });
     if (onEvent) client.subscribe(onEvent);
     try {
-      const initialized = await client.request<{ ownerId?: string; cwd?: string } | undefined>({ operation: "init", args: init }, this.#options.startupTimeoutMs ?? 30_000);
+      const initialized = await client.request<{ ownerId?: string; cwd?: string; admission?: OriginalAdmissionReceipt } | undefined>({ operation: "init", args: init }, this.#options.startupTimeoutMs ?? 30_000);
       signal?.throwIfAborted();
       this.#assertActive();
-      if ((init.mode === "create" || init.mode === "open") && !client.snapshot) throw new Error("OMP worker did not return native session metadata");
+      if ((init.mode === "create" || init.mode === "open" || init.mode === "open-original") && !client.snapshot) throw new Error("OMP worker did not return native session metadata");
       if (init.mode === "create" && client.snapshot!.cwd !== init.options.cwd) throw new Error("OMP worker initialization changed working directory");
       if (init.mode === "open" && (client.snapshot!.id !== init.options.expectedIdentity?.id || client.snapshot!.cwd !== init.options.expectedIdentity.cwd)) throw new Error("OMP worker initialization changed session identity");
+      if (init.mode === "open-original") {
+        // Only a worker that ran the admitted native open can answer this, and
+        // its live snapshot must still be the enrolled original itself.
+        assertOriginalAdmissionReceipt(initialized?.admission, init.options);
+        if (client.snapshot!.id !== init.options.binding.nativeId || client.snapshot!.cwd !== init.options.binding.recordedCwd
+          || path.resolve(client.snapshot!.sessionFile) !== init.options.binding.originalFile)
+          throw new OriginalAdmissionOutcomeUnknown("admitted-identity-changed", "The OMP worker changed the admitted original session identity");
+      }
       if ((init.mode === "browser" || init.mode === "mcp-owner") && (client.snapshot || initialized?.ownerId !== init.owner.id || initialized.cwd !== init.owner.cwd)) throw new Error("OMP browser owner initialization changed identity");
       if (resetPolicyWorkerEpoch) client.attachResetPolicyOwner(client.snapshot!, this.#options.createResetPolicyOwner!);
       return client;
@@ -1170,6 +1191,62 @@ export class WorkerRuntime {
         return this.#handle(client);
       } catch (error) { this.#openFiles.delete(sessionFile); throw error; }
     })());
+  }
+
+  /** Admits an enrolled cooperative original. The spawned worker process takes
+   * the native writer lease itself and revalidates the reviewed source under it
+   * before any writable open; this host never opens the original file, never
+   * holds its lease and never falls back to the generic open above. */
+  openOriginal(options: OriginalAdmissionRequest & { onEvent?: WorkerEventListener }): Promise<WorkerSession> {
+    const { onEvent } = options;
+    let admission: OriginalAdmissionRequest;
+    try {
+      // Nothing has been spawned yet, so each of these refusals is proven to
+      // have had no effect on the original session.
+      if (this.#disposed) throw new OriginalAdmissionRefusal("runtime-disposed", "OMP worker runtime is disposed");
+      admission = parseOriginalAdmissionRequest(options);
+      if (this.#openFiles.has(admission.binding.originalFile))
+        throw new OriginalAdmissionRefusal("original-already-open", "This original session is already open in this worker runtime");
+    } catch (error) { return Promise.reject(error); }
+    const originalFile = admission.binding.originalFile;
+    this.#openFiles.add(originalFile);
+    return this.#track((async () => {
+      try {
+        // Still pre-spawn: an unavailable or non-canonical original directory
+        // is a proven refusal, and never a fallback launch directory.
+        if (await requireDirectory(admission.binding.canonicalCwd) !== admission.binding.canonicalCwd)
+          throw new OriginalAdmissionRefusal("original-cwd-not-canonical", "The enrolled original working directory is no longer its canonical path");
+        if (this.#disposed) throw new OriginalAdmissionRefusal("runtime-disposed", "OMP worker runtime is disposed");
+      } catch (error) {
+        this.#openFiles.delete(originalFile);
+        if (originalAdmissionCode(error)) throw error;
+        throw new OriginalAdmissionRefusal("original-cwd-unavailable",
+          "The enrolled original working directory is unavailable", { cause: error });
+      }
+      try {
+        const client = await this.#spawn({ mode: "open-original", agentDir: this.#options.agentDir, options: admission }, onEvent);
+        const handle = this.#handle(client);
+        this.#originalHandles.set(handle, client);
+        return handle;
+      } catch (error) {
+        this.#openFiles.delete(originalFile);
+        // A worker now exists: only an explicit native classification proves
+        // what happened. Never downgrade anything else to a refusal.
+        if (originalAdmissionCode(error)) throw error;
+        throw new OriginalAdmissionOutcomeUnknown("admission-outcome-unknown",
+          "The OMP worker did not report the outcome of this original session admission. Inspect the original session before retrying.",
+          { cause: error });
+      }
+    })());
+  }
+
+  /** Lookup only: is this exact admitted original handle still the live owner?
+   * False for an ordinary open, a disposed or closing handle, a failed worker
+   * and a disposed runtime. It never dispatches, probes a pid or revives. */
+  isOriginalHandleCurrent(handle: WorkerSession): boolean {
+    const client = this.#originalHandles.get(handle);
+    return !!client && !this.#disposed && this.#sessions.has(handle) && this.#clients.has(client)
+      && !client.closing && client.failure === undefined;
   }
 
   /** Reconnects the exact two native processes retained by a browser handoff.
@@ -1553,7 +1630,11 @@ export class WorkerRuntime {
         const binding: BrowserEvaluationBinding = { ...input.target, ownerId: input.sourceOwnerId, operationId: input.operationId, backend: evaluation.backend };
         await client.installRetainedBrowserEvaluation({ binding, kindTag: input.kindTag, safeDir: state().cwd }, evaluation);
       },
-      enableBrowserRecovery: (socketPath, token, instanceId) => client.enableReconnect(socketPath, token, instanceId),
+      enableBrowserRecovery: (socketPath, token, instanceId) => {
+        if (this.#originalClients.has(client)) return Promise.reject(new OriginalAdmissionRefusal(
+          "unsupported-transition", "An admitted original cannot detach its writer for browser recovery."));
+        return client.enableReconnect(socketPath, token, instanceId);
+      },
       abort: () => client.request({ operation: "abort" }),
       setModel: model => client.request({ operation: "setModel", args: { model } }),
       listAccountChoices: () => client.request({ operation: "listAccountChoices" }),
@@ -1673,7 +1754,7 @@ export class WorkerRuntime {
       // shutdown now so a stuck native setup cannot defer cancellation forever.
       const clients=[...this.#clients];
       const closing = Promise.allSettled(clients.map(client =>
-        options.preserveReconnect && client.reconnectEndpoint ? client.detachForRecovery() : client.close()));
+        options.preserveReconnect && !this.#originalClients.has(client) && client.reconnectEndpoint ? client.detachForRecovery() : client.close()));
       await Promise.allSettled([...this.#setups]);
       const results = await closing;
       // A refused prepare/drain still owns its live transport and durable

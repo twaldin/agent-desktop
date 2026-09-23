@@ -1,0 +1,28 @@
+{
+  "version": "18.1.10",
+  "baseline": "7ab46b88630b47ae8d55e53d8c3922a3f612c945 installed native tree, before the original-session admission slice",
+  "aggregatePatchSha256": "8c774ec397ede63555d543fab8d6ac9c03614adee1087ae2744fc5ad6a5477ee",
+  "modified": {
+    "src/session/session-manager.ts": "58bac0e379c726692cd87638dfd73217079eb44f560e96b909d8b4ddcb54b6b3",
+    "src/session/agent-session.ts": "046232f619f4abcac5b6dd04c0e25b8b17da5a312ee40c6c532f7c96642c589d",
+    "src/session/session-listing.ts": "1c39eda6f6f5b3ef036776e37cd802041bd75721d2c72d6368768f9272c0f885",
+    "dist/types/session/session-manager.d.ts": "c9cc3600ee91f0047fbdf0f1b24c3e65bc708f574caf2f0c8dd5f24d87be0d0e"
+  },
+  "added": [
+    "src/session/original-session-lease.ts",
+    "src/session/original-session-ownership.ts",
+    "dist/types/session/original-session-lease.d.ts",
+    "dist/types/session/original-session-ownership.d.ts"
+  ],
+  "authored": {
+    "dist/types/session/original-session-lease.d.ts": "6c7e094702c6cae542669eece54fdd3725f58126eee15d3451bacd318a626786",
+    "dist/types/session/original-session-ownership.d.ts": "207e4c1fe1976c2aded1ebb71bcc65c1b7484ead65096c06dd081bfc6765af86",
+    "dist/types/session/session-manager.d.ts": "9851569f0a57baff2708553354f9129063fce839eec1534f7731b70067d083d1",
+    "src/session/agent-session.ts": "d998f38398a42d7d1ebcc0d94659b31b27e0aab3a64eadb2ba96cf2714592c33",
+    "src/session/original-session-lease.ts": "57887548fefc9fbf87694143c8d17f6e8230912b2dd68d05f6985dbb6364d3a0",
+    "src/session/original-session-ownership.ts": "f0344169231d673309731432d112d5bbe8c757cb2e45920c9d6cf3dfcb3bb6cf",
+    "src/session/session-listing.ts": "228c79b51255a8ce984b0790dcc3fb6854bc0437373425186e2895cc23cfa547",
+    "src/session/session-manager.ts": "e6b5e2b7c7961df168124f1538644c46415673933842ad1af69bc32e4234b0f6"
+  },
+  "sliceSha256": "7175940955036777241b470b2b7266e596b0164e4e1decaa556b5df577c60915"
+}

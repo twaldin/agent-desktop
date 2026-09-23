@@ -32,7 +32,14 @@ export interface OriginalSessionInspection {
   issues: string[];
   writeAdmission: { allowed: false; reason: "source-invalid" | "ownership-unverified" };
 }
-interface CandidateState { sourcePath: string; canonicalFile: string; fingerprint?: string; revision?: string }
+/** Host-internal observation for a participating writer to revalidate under its
+ * own lifetime lock. This record grants no writable ownership. */
+export interface ReviewedNativeSessionSource {
+  candidateId: string; revision: string; originalFile: string; nativeId: string;
+  recordedCwd: string; canonicalCwd: string; contentSha256: string;
+  fileIdentity: { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number; birthtimeMs: number };
+}
+interface CandidateState { sourcePath: string; canonicalFile: string; fingerprint?: string; revision?: string; reviewed?: ReviewedNativeSessionSource }
 const sameIdentity = (a: Awaited<ReturnType<typeof stat>>, b: Awaited<ReturnType<typeof stat>>) => a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
 
 /** Read-only opt-in inspection, deliberately not a writable import service.
@@ -88,6 +95,7 @@ export class NativeSessionImports {
   }
   async inspect(candidateId: string): Promise<OriginalSessionInspection> {
     const candidate = this.#candidates.get(candidateId); if (!candidate) throw new Error("Select a current native import candidate");
+    candidate.reviewed = undefined;
     const canonical = await this.#canonical(candidate.sourcePath);
     if (canonical !== candidate.canonicalFile) throw new Error("Native session alias changed; scan again");
     const file = await open(canonical, "r");
@@ -120,11 +128,23 @@ export class NativeSessionImports {
       } catch { issues.push("Original working directory is unavailable; import must not fall back to another directory"); }
       const fingerprint = createHash("sha256").update(buffer.subarray(0, bytes)).update(JSON.stringify([canonical, after.dev, after.ino, canonicalCwd])).digest("hex");
       if (fingerprint !== candidate.fingerprint) { candidate.fingerprint = fingerprint; candidate.revision = randomUUID(); }
+      if (!issues.length && nativeId && recordedCwd && canonicalCwd) candidate.reviewed = {
+        candidateId, revision: candidate.revision!, originalFile: canonical, nativeId, recordedCwd, canonicalCwd,
+        contentSha256: createHash("sha256").update(buffer.subarray(0, bytes)).digest("hex"),
+        fileIdentity: { dev: after.dev, ino: after.ino, size: after.size, mtimeMs: after.mtimeMs, ctimeMs: after.ctimeMs, birthtimeMs: after.birthtimeMs },
+      };
       return { candidateId, revision: candidate.revision!, originalFile: canonical, nativeId, recordedCwd, canonicalCwd, nativeVersion,
         entries: loaded.entries.length, messages: loaded.entries.filter(entry => entry?.type === "message").length,
         malformedRecords: loaded.malformedRecords, issues,
         writeAdmission: { allowed: false, reason: issues.length ? "source-invalid" : "ownership-unverified" } };
     } finally { await file.close(); }
+  }
+  async resolveReviewedSource(candidateId: string, expectedRevision: string): Promise<ReviewedNativeSessionSource> {
+    const inspection = await this.inspect(candidateId);
+    if (inspection.revision !== expectedRevision) throw new Error("Original session changed since inspection");
+    const reviewed = this.#candidates.get(candidateId)?.reviewed;
+    if (inspection.issues.length || !reviewed || reviewed.revision !== inspection.revision) throw new Error("The original native session is not valid for ownership admission");
+    return structuredClone(reviewed);
   }
   async checkAdmission(candidateId: string, expectedRevision: string): Promise<OriginalSessionInspection["writeAdmission"]> {
     const inspection = await this.inspect(candidateId);

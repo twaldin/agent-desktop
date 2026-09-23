@@ -1,3 +1,5 @@
+import { requestNativeImportListing, requestNativeImportInspection,requestNativeImportPreparation,requestNativeImportAdmission,requestNativeImportStatus } from "./session-import-transport";
+import {parseNativeImportPreparationRequest,parseNativeImportAdmissionRequest,nativeImportCommandId} from "@agent-desktop/shared";
 import { SessionProcessJournalStore } from "./session-process-journal";
 import { registerSessionTreeReadHandler } from "./session-tree-transport";
 import { registerTodoExternalEditorHandlers } from "./todo-external-editor-transport";
@@ -526,6 +528,58 @@ ipcMain.handle("host:image-read", async (event, sha256: string, hostId: string) 
 });
 ipcMain.handle("host:transcript-image", async (event, sessionId: string, nativeEntryId: string, blockIndex: number, hostId: string, source?: "generated") => {
   assertTrustedSender(event); return requestTranscriptImage(await endpointFor(requireImageOwner(hostId)), sessionId, nativeEntryId, blockIndex, source);
+});
+// Import inspection uses the existing window/host cancellation owner, isolated
+// from ordinary chat search so either surface cannot cancel the other's read.
+const sessionImportRequests = new SessionSearchRequests();
+const importOwners = new WeakSet<Electron.WebContents>();
+function prepareSessionImport(event: Electron.IpcMainInvokeEvent, hostId: string): void {
+  assertTrustedSender(event);
+  if (typeof hostId !== "string" || !hostId || hostId.length > 200 || /[\x00-\x1f\x7f]/.test(hostId)) throw new Error("Choose the native session's owning host.");
+  if (!importOwners.has(event.sender)) {
+    importOwners.add(event.sender);
+    const owner = event.sender.id; event.sender.once("destroyed", () => sessionImportRequests.close(owner));
+  }
+}
+ipcMain.handle("host:session-import-list", (event, hostId: string, requestId: string) => {
+  prepareSessionImport(event, hostId);
+  return sessionImportRequests.run(event.sender.id, hostId, requestId, async signal => {
+    const endpoint = await endpointFor(hostId); signal.throwIfAborted(); assertTrustedSender(event);
+    return requestNativeImportListing(endpoint, signal);
+  });
+});
+ipcMain.handle("host:session-import-inspect", (event, hostId: string, candidateId: string, requestId: string) => {
+  prepareSessionImport(event, hostId);
+  return sessionImportRequests.run(event.sender.id, hostId, requestId, async signal => {
+    const endpoint = await endpointFor(hostId); signal.throwIfAborted(); assertTrustedSender(event);
+    return requestNativeImportInspection(endpoint, candidateId, signal);
+  });
+});
+ipcMain.handle("host:session-import-cancel", (event, hostId: string, requestId: string) => {
+  prepareSessionImport(event, hostId);
+  if (typeof requestId !== "string") throw new Error("Invalid native session read cancellation.");
+  sessionImportRequests.cancel(event.sender.id, hostId, requestId);
+});
+ipcMain.handle("host:session-import-prepare",(event,hostId:string,input:unknown,requestId:string)=>{
+  prepareSessionImport(event,hostId);const parsed=parseNativeImportPreparationRequest(input);
+  return sessionImportRequests.run(event.sender.id,hostId,requestId,async signal=>{
+    const endpoint=await endpointFor(hostId);signal.throwIfAborted();assertTrustedSender(event);
+    return requestNativeImportPreparation(endpoint,parsed,signal);
+  });
+});
+ipcMain.handle("host:session-import-admit",async(event,hostId:string,input:unknown)=>{
+  prepareSessionImport(event,hostId);const parsed=parseNativeImportAdmissionRequest(input);
+  const endpoint=await endpointFor(hostId);assertTrustedSender(event);
+  // A lost response is recovered by the saved command ID. Closing a picker or
+  // starting another read cannot cancel the host's native admission lifetime.
+  return requestNativeImportAdmission(endpoint,parsed,new AbortController().signal);
+});
+ipcMain.handle("host:session-import-outcome",(event,hostId:string,commandId:string,requestId:string)=>{
+  prepareSessionImport(event,hostId);commandId=nativeImportCommandId(commandId);
+  return sessionImportRequests.run(event.sender.id,hostId,requestId,async signal=>{
+    const endpoint=await endpointFor(hostId);signal.throwIfAborted();assertTrustedSender(event);
+    return requestNativeImportStatus(endpoint,commandId,signal);
+  });
 });
 const sessionSearchRequests = new SessionSearchRequests();
 const searchOwners = new WeakSet<Electron.WebContents>();

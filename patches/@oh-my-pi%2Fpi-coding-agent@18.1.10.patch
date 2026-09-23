@@ -1028,6 +1028,354 @@ index 5ebc702..bead2c5 100644
  /** One attempt per (account, weekly-reset-minute) block episode. */
  export declare function blockedAttemptKey(accountKey: string, weeklyResetsAtMs: number): string;
  /** One attempt per (account, credit-expiry-minute) salvage episode. */
+diff --git a/dist/types/session/original-session-lease.d.ts b/dist/types/session/original-session-lease.d.ts
+new file mode 100755
+index 0000000..ec0bc2a
+--- /dev/null
++++ b/dist/types/session/original-session-lease.d.ts
+@@ -0,0 +1,179 @@
++import * as fs from "node:fs";
++/**
++ * Wire generation of the cooperating original-session ownership regime.
++ *
++ * Bumping this invalidates every existing enrollment record: a record written
++ * by another generation is never adopted, so a future protocol can change the
++ * record shape without silently inheriting stale bindings.
++ */
++export declare const ORIGINAL_SESSION_OWNERSHIP_PROTOCOL = 1;
++/** Exact filesystem identity of an original transcript, as reviewed before admission. */
++export interface NativeFileIdentity {
++    dev: number;
++    ino: number;
++    size: number;
++    mtimeMs: number;
++    ctimeMs: number;
++    birthtimeMs: number;
++}
++/** Inode-level identity of a directory or lock sidecar bound by an enrollment. */
++export interface NativeNodeIdentity {
++    dev: number;
++    ino: number;
++}
++/**
++ * The requested original was NOT submitted to a writer, and that refusal is
++ * proven to have happened before any effect on the original file, its
++ * enrollment record, or its lock sidecar.
++ *
++ * A cleanup failure is never reported through this class — see
++ * {@link OriginalSessionOutcomeUnknownError}.
++ */
++export declare class OriginalSessionNotSubmittedError extends Error {
++    readonly code: "ORIGINAL_SESSION_NOT_SUBMITTED";
++    readonly reason: string;
++    constructor(reason: string, message: string, options?: {
++        cause?: unknown;
++    });
++}
++/**
++ * Effects on the original may have begun and could not be proven undone.
++ * Callers must treat the original as possibly mutated and possibly still
++ * owned; they must not retry as though nothing happened.
++ */
++export declare class OriginalSessionOutcomeUnknownError extends Error {
++    readonly code: "OUTCOME_UNKNOWN";
++    readonly reason: string;
++    constructor(reason: string, message: string, options?: {
++        cause?: unknown;
++    });
++}
++export declare function notSubmitted(reason: string, message: string, cause?: unknown): OriginalSessionNotSubmittedError;
++export declare function outcomeUnknown(reason: string, message: string, cause?: unknown): OriginalSessionOutcomeUnknownError;
++export declare function readNodeIdentity(target: string): NativeNodeIdentity | undefined;
++export declare function sameNodeIdentity(a: NativeNodeIdentity | undefined, b: NativeNodeIdentity | undefined): boolean;
++/** Field-by-field comparison; every reviewed field must still hold. */
++export declare function fileIdentityDifference(expected: NativeFileIdentity, actual: NativeFileIdentity): keyof NativeFileIdentity | undefined;
++/**
++ * A transcript is only a safe ownership target when the path itself is the
++ * single name of a regular file: a symlink hands the write to an unknown
++ * target and a hard link lets a second name alias the owned bytes without
++ * ever contending for the sidecar.
++ */
++export declare function assertSafeOriginalTarget(file: string, stats: fs.Stats): void;
++/** Immutable view of an installed lease, safe to hand to observers. */
++export interface OriginalOwnershipView {
++    protocol: typeof ORIGINAL_SESSION_OWNERSHIP_PROTOCOL;
++    enrollmentId: string;
++    registryId: string;
++    nativeId: string;
++    originalFile: string;
++    lockPath: string;
++    commandId: string | undefined;
++    held: boolean;
++}
++/**
++ * Refuse a write/open against a canonical original owned by a different lease
++ * in this process. Free for every unenrolled manager: with no lease anywhere
++ * in the process the map is empty and this is a single size check.
++ */
++export declare function assertNoForeignOriginalWriter(target: string, mine: OriginalWriterLease | undefined): void;
++/** Durable, path-local proof that a transcript belongs to an enrollment. */
++export interface OriginalEnrollmentMarker {
++    protocol: number;
++    registryId: string;
++    enrollmentId: string;
++    nativeId: string;
++    ownershipDirectory: string;
++}
++/**
++ * Where the enrollment marker for `originalFile` lives: a dotfile beside the
++ * transcript, outside the `*.jsonl` namespace the session listing scans.
++ */
++export declare function originalEnrollmentMarkerPath(originalFile: string): string;
++export declare function readOriginalEnrollmentMarker(originalFile: string): OriginalEnrollmentMarker | undefined | "unreadable";
++/**
++ * Refuse any patched-SDK open of a transcript that is durably enrolled unless
++ * the caller arrived with the matching admitted lease.
++ *
++ * The process-local map only sees writers inside THIS process. A desktop fork,
++ * revive, or branch that spawns a DIFFERENT worker and reaches the enrolled
++ * transcript through an ordinary `SessionManager.open()` / `forkFrom()` has no
++ * lease at all, and the previous owner may already be gone, so nothing in this
++ * process would contend. The marker is what makes that recognisable from the
++ * path alone.
++ *
++ * The marker only ever RESTRICTS. Participation is still granted exclusively by
++ * a registry record minted before the first header, so a forged or copied
++ * marker can cause a refusal but can never manufacture an enrollment. A marker
++ * that exists but cannot be understood fails closed for the same reason.
++ */
++export declare function assertEnrolledSourceAdmitted(target: string, lease: OriginalWriterLease | undefined): void;
++/** Publish the durable marker. Called only while the writer lease is held. */
++export declare function writeOriginalEnrollmentMarker(originalFile: string, marker: OriginalEnrollmentMarker): void;
++/**
++ * A real OS lock held by THIS process for one canonical original transcript,
++ * plus the identity bindings that make the ownership meaningful.
++ *
++ * The stable lock path names a kernel lock on Linux/Windows and a physical
++ * sidecar on other Unix platforms. Physical sidecars are never unlinked.
++ * Locking the transcript itself would lose ownership when an atomic rewrite
++ * replaces its inode. Transcript identity is bound separately and rebound
++ * after each publication this lease performed, so outside swaps are detected.
++ */
++export declare class OriginalWriterLease {
++    readonly protocol: 1;
++    readonly enrollmentId: string;
++    readonly registryId: string;
++    readonly nativeId: string;
++    /** Canonical (`path.resolve`d) original transcript this lease owns. */
++    readonly originalFile: string;
++    readonly parentDirectory: string;
++    readonly lockPath: string;
++    readonly parentIdentity: NativeNodeIdentity;
++    /** Absent only for the pinned Linux/Windows kernel-name backend. */
++    readonly sidecarIdentity: NativeNodeIdentity | undefined;
++    private constructor();
++    /**
++     * Take real OS ownership of `originalFile` through its stable lock path, or refuse
++     * with a proven no-effect `active-writer`. Nothing is written to the
++     * transcript and no writable handle is opened here.
++     */
++    static acquire(init: {
++        enrollmentId: string;
++        registryId: string;
++        nativeId: string;
++        originalFile: string;
++        lockPath: string;
++        expectedParentIdentity: NativeNodeIdentity;
++    }): OriginalWriterLease;
++    get held(): boolean;
++    get commandId(): string | undefined;
++    /** Bound transcript inode, or undefined before the first header exists. */
++    get boundIdentity(): NativeNodeIdentity | undefined;
++    view(): OriginalOwnershipView;
++    /** Attribute this lease to the admission command that won it. */
++    attachCommand(commandId: string): void;
++    /** Pin the reviewed transcript inode so a later swap is detected. */
++    bindIdentity(identity: NativeNodeIdentity): void;
++    /**
++     * Gate one write against this lease.
++     *
++     * `verifyIdentity` is false for a line appended through an already-open,
++     * already-validated handle and true whenever a fresh handle is opened or
++     * the whole file is republished.
++     */
++    assertWritable(target: string, verifyIdentity: boolean): void;
++    /**
++     * Adopt the inode published by a rewrite this lease just performed. An
++     * atomic replace legitimately changes the transcript inode; every other
++     * inode change stays a retarget.
++     */
++    noteRepublished(): void;
++    /**
++     * Relinquish real OS ownership. Only ever called after a terminal drain
++     * completed successfully; a failed release is an unknown outcome because
++     * another writer may or may not now be admissible.
++     */
++    release(): void;
++}
+diff --git a/dist/types/session/original-session-ownership.d.ts b/dist/types/session/original-session-ownership.d.ts
+new file mode 100755
+index 0000000..6b63113
+--- /dev/null
++++ b/dist/types/session/original-session-ownership.d.ts
+@@ -0,0 +1,92 @@
++import { type NativeFileIdentity, ORIGINAL_SESSION_OWNERSHIP_PROTOCOL, OriginalSessionNotSubmittedError, OriginalSessionOutcomeUnknownError } from "./original-session-lease.js";
++import { SessionManager } from "./session-manager.js";
++export { type NativeFileIdentity, ORIGINAL_SESSION_OWNERSHIP_PROTOCOL, OriginalSessionNotSubmittedError, OriginalSessionOutcomeUnknownError, };
++/**
++ * Durable proof that one native original transcript was created by a known
++ * cooperating writer under this protocol generation.
++ *
++ * A binding is minted exactly once, by {@link createCooperativeOriginal},
++ * before that original's first header reaches disk. It is never derived from
++ * an observation of an already-existing transcript: an unknown stock original
++ * has no binding and can never acquire one retrospectively.
++ */
++export interface NativeOriginalBinding {
++    protocol: typeof ORIGINAL_SESSION_OWNERSHIP_PROTOCOL;
++    enrollmentId: string;
++    registryId: string;
++    originalFile: string;
++    nativeId: string;
++    recordedCwd: string;
++    canonicalCwd: string;
++}
++/**
++ * The reviewed state of an original transcript at the moment a caller decided
++ * to admit it. Structurally the native half of the host's reviewed session
++ * source, which additionally carries the UI candidate id and revision.
++ *
++ * Every field is revalidated under real ownership before a writable open.
++ */
++export interface NativeOriginalSource {
++    originalFile: string;
++    nativeId: string;
++    recordedCwd: string;
++    canonicalCwd: string;
++    contentSha256: string;
++    fileIdentity: NativeFileIdentity;
++}
++export type OriginalParticipation = {
++    ok: true;
++    binding: NativeOriginalBinding;
++} | {
++    ok: false;
++    reason: string;
++    message: string;
++};
++/**
++ * Decide whether a reviewed original participates in the cooperating regime.
++ *
++ * Strictly readonly: no directory is created, no lock is attempted, and no
++ * native session is opened. A refusal is a value rather than a throw, because
++ * a non-participating original is an ordinary answer, not a failure.
++ */
++export declare function inspectOriginalParticipation(ownershipDirectory: string, source: NativeOriginalSource): Promise<OriginalParticipation>;
++/**
++ * Re-observe an enrolled original without taking ownership.
++ *
++ * Deliberately performs no directory migration, no header rewrite and no
++ * writable open: callers use this to refresh a reviewed source before a later
++ * admission, and an observation that mutated the original would destroy the
++ * very identity it reports.
++ */
++export declare function observeEnrolledOriginal(ownershipDirectory: string, binding: NativeOriginalBinding): Promise<NativeOriginalSource>;
++/**
++ * Create a brand-new original that participates in the cooperating regime.
++ *
++ * Ownership and the enrollment record are established BEFORE the first header
++ * is published, which is what makes the resulting provenance meaningful: the
++ * regime is a property of how the transcript was born, never a marker that can
++ * be stamped onto an unknown stock transcript later.
++ */
++export declare function createCooperativeOriginal(options: {
++    ownershipDirectory: string;
++    cwd: string;
++    sessionDirectory: string;
++}): Promise<{
++    manager: SessionManager;
++    binding: NativeOriginalBinding;
++}>;
++/**
++ * Take real writer-process ownership of an already-enrolled original and open
++ * it as the exact native session it already is.
++ *
++ * Ordering is the whole contract: the OS lock is taken first, every reviewed
++ * fact is revalidated while it is held, and only then does a writable open
++ * happen. A refusal before that open is therefore proven to have had no
++ * effect; anything that fails afterwards is an unknown outcome and says so.
++ */
++export declare function openAdmittedOriginal(options: {
++    ownershipDirectory: string;
++    binding: NativeOriginalBinding;
++    source: NativeOriginalSource;
++    commandId: string;
++}): Promise<SessionManager>;
+diff --git a/dist/types/session/session-manager.d.ts b/dist/types/session/session-manager.d.ts
+index eaa9e60..ce8aa20 100644
+--- a/dist/types/session/session-manager.d.ts
++++ b/dist/types/session/session-manager.d.ts
+@@ -4,6 +4,7 @@ import { ArtifactManager } from "./artifacts.js";
+ import { type BlobPutOptions, type BlobPutResult } from "./blob-store.js";
+ import type { CompactionMethod } from "./compaction-methods.js";
+ import { type BashExecutionMessage, type CustomMessage, type FileMentionMessage, type HookMessage, type PythonExecutionMessage } from "./messages.js";
++import { type OriginalOwnershipView, type OriginalWriterLease } from "./original-session-lease.js";
+ import { type BuildSessionContextOptions, type SessionContext } from "./session-context.js";
+ import { type ModelUsageEntry, type NewSessionOptions, type SessionEntry, type SessionHeader, type SessionTitleSource, type SessionTreeNode, type UsageStatistics } from "./session-entries.js";
+ import { type SessionInfo } from "./session-listing.js";
+@@ -68,6 +69,28 @@ export declare class SessionManager {
+      */
+     onEntryAppended?: (entry: SessionEntry) => void;
+     private constructor();
++    /**
++     * Bind this manager to a lease that is already held by this process.
++     *
++     * Only the cooperating admission path calls this, and only before the
++     * manager has opened anything writable, so the lease is in place before the
++     * first header of a new original and before the first writable open of an
++     * admitted one.
++     */
++    adoptOriginalOwnership(lease: OriginalWriterLease): void;
++    /** Readonly ownership view, or undefined for a manager outside the regime. */
++    getOriginalOwnership(): OriginalOwnershipView | undefined;
++    /**
++     * Refuse a session transition this regime has not proven, BEFORE it has any
++     * effect on native identity, files, or provider state.
++     *
++     * The admitted regime supports exactly opening and resuming the original it
++     * was admitted for. Switch, move, revive-elsewhere, new, fork and branch
++     * all retarget or duplicate native identity, and none of them has an
++     * accepted owning lifetime here, so they are rejected rather than allowed
++     * to fall through to an ordinary unmanaged native transition.
++     */
++    assertOriginalTransitionAllowed(action: string): void;
+     /** Puts a binary blob into the blob store and returns the blob reference. */
+     putBlob(data: Buffer, options?: BlobPutOptions): Promise<BlobPutResult>;
+     /** Synchronous variant of {@link putBlob} for rebuild-only render paths. */
+@@ -150,7 +173,14 @@ export declare class SessionManager {
+      * history, and Ctrl+C must not rebuild the whole JSONL string just to flush.
+      */
+     flushSync(): void;
+-    /** Flush, then close the append writer. */
++    /**
++     * Flush, then close the append writer.
++     *
++     * For a cooperating original this is also where ownership goes back: the
++     * drain below is the terminal one, so a sealed manager that reaches the end
++     * of this method without a latched failure has provably quiesced and can
++     * relinquish its lease. A throw anywhere above keeps it.
++     */
+     close(): Promise<void>;
+     /**
+      * Raise the terminal write barrier ahead of the final {@link close}. Once
+@@ -460,6 +490,7 @@ export declare class SessionManager {
+     static open(filePath: string, sessionDir?: string, storage?: SessionStorage, options?: {
+         initialCwd?: string;
+         suppressBreadcrumb?: boolean;
++        originalOwnership?: OriginalWriterLease;
+     }): Promise<SessionManager>;
+     /**
+      * Lock-free peek for cold subagent revival: returns the recorded working
 diff --git a/dist/types/session/tool-choice-queue.d.ts b/dist/types/session/tool-choice-queue.d.ts
 index 1c9f2ba..48c1b49 100644
 --- a/dist/types/session/tool-choice-queue.d.ts
@@ -6239,7 +6587,7 @@ index bead7e3..85c3bae 100644
  	onPayload?: SimpleStreamOptions["onPayload"];
  	/** Provider response hook used by the active session request path. */
 diff --git a/src/session/agent-session.ts b/src/session/agent-session.ts
-index ea17642..c24a240 100644
+index ea17642..0edc0e4 100644
 --- a/src/session/agent-session.ts
 +++ b/src/session/agent-session.ts
 @@ -32,6 +32,9 @@ import {
@@ -6869,7 +7217,59 @@ index ea17642..c24a240 100644
  	/**
  	 * Applies Code Mode at session startup: when the initial model activates
  	 * it (`codeMode` `on`, or `auto` matching a `code_mode_only` catalog flag),
-@@ -9312,6 +9743,8 @@ export class AgentSession {
+@@ -7564,6 +7995,7 @@ export class AgentSession {
+ 	 */
+ 	async newSession(options?: NewSessionOptions): Promise<boolean> {
+ 		this.#assertVibeSessionTransitionAllowed("start a new session");
++		this.sessionManager.assertOriginalTransitionAllowed("start a new session");
+ 		const previousSessionFile = this.sessionFile;
+ 
+ 		// Emit session_before_switch event with reason "new" (can be cancelled)
+@@ -7693,6 +8125,7 @@ export class AgentSession {
+ 	 */
+ 	async fork(): Promise<boolean> {
+ 		this.#assertVibeSessionTransitionAllowed("fork the session");
++		this.sessionManager.assertOriginalTransitionAllowed("fork the session");
+ 		const previousSessionFile = this.sessionFile;
+ 		const previousSessionId = this.sessionManager.getSessionId();
+ 
+@@ -7766,6 +8199,7 @@ export class AgentSession {
+ 	/** Move the active session and artifacts after enforcing mode transition invariants. */
+ 	async moveSession(newCwd: string, targetSessionDir?: string): Promise<void> {
+ 		this.#assertVibeSessionTransitionAllowed("move the session");
++		this.sessionManager.assertOriginalTransitionAllowed("move the session");
+ 		await this.sessionManager.moveTo(newCwd, targetSessionDir);
+ 	}
+ 
+@@ -8715,6 +9149,11 @@ export class AgentSession {
+ 		const switchingToDifferentSession = previousSessionFile
+ 			? path.resolve(previousSessionFile) !== path.resolve(sessionPath)
+ 			: true;
++		// Refuse before the cancellable extension hook runs: a cooperating
++		// original must not observe a switch attempt it can never complete.
++		if (switchingToDifferentSession) {
++			this.sessionManager.assertOriginalTransitionAllowed("switch to another session");
++		}
+ 		// Emit session_before_switch event (can be cancelled)
+ 		if (this.#extensionRunner?.hasHandlers("session_before_switch")) {
+ 			const result = (await this.#extensionRunner.emit({
+@@ -9072,6 +9511,7 @@ export class AgentSession {
+ 		selectedImages: ImageContent[];
+ 		cancelled: boolean;
+ 	}> {
++		this.sessionManager.assertOriginalTransitionAllowed("branch the session");
+ 		const previousSessionFile = this.sessionFile;
+ 		const selectedEntry = this.sessionManager.getEntry(entryId);
+ 
+@@ -9176,6 +9616,7 @@ export class AgentSession {
+ 		leafId: string,
+ 		sessionId: string,
+ 	): Promise<{ cancelled: boolean; sessionFile: string | undefined }> {
++		this.sessionManager.assertOriginalTransitionAllowed("branch the session");
+ 		const previousSessionFile = this.sessionFile;
+ 		if (!this.sessionManager.getSessionFile()) {
+ 			throw new Error("Cannot branch /btw: session is not persisted");
+@@ -9312,6 +9753,8 @@ export class AgentSession {
  		targetId: string,
  		options: {
  			summarize?: boolean;
@@ -6878,7 +7278,7 @@ index ea17642..c24a240 100644
  			customInstructions?: string;
  			/**
  			 * Opts into the two-phase `ask` toolResult re-answer protocol
-@@ -9362,6 +9795,7 @@ export class AgentSession {
+@@ -9362,6 +9805,7 @@ export class AgentSession {
  		askReanswerCommitted?: boolean;
  	}> {
  		await this.#bash.flushPending();
@@ -6886,7 +7286,7 @@ index ea17642..c24a240 100644
  		const oldLeafId = this.sessionManager.getLeafId();
  
  		const targetEntry = this.sessionManager.getEntry(targetId);
-@@ -9511,6 +9945,9 @@ export class AgentSession {
+@@ -9511,6 +9955,9 @@ export class AgentSession {
  			summaryDetails = hookSummary.details;
  		}
  
@@ -6896,7 +7296,7 @@ index ea17642..c24a240 100644
  		// Determine the new leaf position based on target type
  		let newLeafId: string | null;
  		let editorText: string | undefined;
-@@ -9794,9 +10231,104 @@ export class AgentSession {
+@@ -9794,9 +10241,104 @@ export class AgentSession {
  	}
  
  	async fetchUsageReports(signal?: AbortSignal): Promise<UsageReport[] | null> {
@@ -7003,7 +7403,7 @@ index ea17642..c24a240 100644
  			baseUrlResolver: provider => {
  				if (provider === "google-antigravity") {
  					const mode = this.settings.get("providers.antigravityEndpoint");
-@@ -9810,11 +10342,57 @@ export class AgentSession {
+@@ -9810,11 +10352,57 @@ export class AgentSession {
  			},
  			signal,
  		});
@@ -7063,7 +7463,7 @@ index ea17642..c24a240 100644
  	}
  
  	/** Models whose live `/usage` reports map to a quantitative provider scope. */
-@@ -9888,11 +10466,14 @@ export class AgentSession {
+@@ -9888,11 +10476,14 @@ export class AgentSession {
  	/**
  	 * Ask before the first auto-spend (`codexResets.autoRedeem === "unset"`).
  	 * The answer is persisted, so this fires at most once per install. Headless
@@ -7079,7 +7479,7 @@ index ea17642..c24a240 100644
  	): Promise<boolean> {
  		const first = actions[0];
  		if (!first) return false;
-@@ -9906,6 +10487,11 @@ export class AgentSession {
+@@ -9906,6 +10497,11 @@ export class AgentSession {
  					"codex-auto-reset",
  				);
  			}
@@ -7091,7 +7491,7 @@ index ea17642..c24a240 100644
  			return false;
  		}
  
-@@ -9918,17 +10504,23 @@ export class AgentSession {
+@@ -9918,17 +10514,23 @@ export class AgentSession {
  			actions.length === 1
  				? `Spend a saved Codex rate-limit reset?\n${lines[0]}`
  				: `Spend ${actions.length} saved Codex rate-limit resets?\n${lines.join("\n")}`;
@@ -7125,7 +7525,7 @@ index ea17642..c24a240 100644
  			if (choice === "Yes") {
  				this.settings.set("codexResets.autoRedeem", "yes");
  				return true;
-@@ -9942,21 +10534,125 @@ export class AgentSession {
+@@ -9942,21 +10544,125 @@ export class AgentSession {
  		return false;
  	}
  
@@ -7258,7 +7658,7 @@ index ea17642..c24a240 100644
  			settings: {
  				enabled: shouldEvaluateCodexAutoRedeem(cfg.autoRedeem),
  				minBlockedMinutes: Math.max(0, cfg.minBlockedMinutes),
-@@ -9969,38 +10665,85 @@ export class AgentSession {
+@@ -9969,38 +10675,85 @@ export class AgentSession {
  			deferredUntilByKey: coordinator.deferredUntilByKey,
  			lastAttemptAtByAccount: coordinator.lastAttemptAtByAccount,
  			activeBlockUnblockAtMs,
@@ -7354,7 +7754,7 @@ index ea17642..c24a240 100644
  			} catch (error) {
  				// Thrown transport failure (network error, 15s timeout): same policy
  				// as a non-terminal code — release the episode and retry after the
-@@ -10013,8 +10756,18 @@ export class AgentSession {
+@@ -10013,8 +10766,18 @@ export class AgentSession {
  					account: action.accountKey,
  					error: String(error),
  				});
@@ -7373,7 +7773,7 @@ index ea17642..c24a240 100644
  			if (!isTerminalRedeemOutcome(outcome.code)) {
  				// `nothing_to_reset` (limits not constrained enough yet) or a
  				// transport failure: the credit is STILL BANKED. Release the episode
-@@ -10063,7 +10816,27 @@ export class AgentSession {
+@@ -10063,7 +10826,27 @@ export class AgentSession {
  					}
  					break;
  				default:
@@ -7402,7 +7802,7 @@ index ea17642..c24a240 100644
  						this.emitNotice(
  							"warning",
  							`Codex auto-redeem for ${action.label} failed (${outcome.code}); will retry later.`,
-@@ -10077,10 +10850,361 @@ export class AgentSession {
+@@ -10077,10 +10860,361 @@ export class AgentSession {
  					}
  					break;
  			}
@@ -7766,7 +8166,7 @@ index ea17642..c24a240 100644
  	}
  
  	/**
-@@ -10098,7 +11222,9 @@ export class AgentSession {
+@@ -10098,7 +11232,9 @@ export class AgentSession {
  	 * active account has no credits. The "unset" mode asks before spending;
  	 * "yes" skips the prompt; "no" avoids the eligibility IO entirely.
  	 * Per-account in-flight dedup lets concurrent sessions adopt one pass
@@ -7777,7 +8177,7 @@ index ea17642..c24a240 100644
  	 */
  	async #maybeAutoRedeemCodexReset(activeBlockUnblockAtMs?: number): Promise<boolean> {
  		const coordinator = this.#codexResetCoordinator;
-@@ -10112,10 +11238,41 @@ export class AgentSession {
+@@ -10112,10 +11248,41 @@ export class AgentSession {
  		const identity = authStorage.getOAuthAccountIdentity("openai-codex", this.sessionId);
  		const accountKey = (identity?.accountId ?? identity?.email)?.trim().toLowerCase();
  		if (!accountKey) return false;
@@ -7820,7 +8220,7 @@ index ea17642..c24a240 100644
  			// Live data: the cached report predates the block that got us here.
  			await authStorage.invalidateUsageCache("openai-codex");
  			const reports = await this.fetchUsageReports();
-@@ -10132,24 +11289,50 @@ export class AgentSession {
+@@ -10132,24 +11299,50 @@ export class AgentSession {
  					error: String(error),
  				});
  			}
@@ -7881,7 +8281,7 @@ index ea17642..c24a240 100644
  		return run;
  	}
  
-@@ -10159,35 +11342,83 @@ export class AgentSession {
+@@ -10159,35 +11352,83 @@ export class AgentSession {
  	 * rule in `./codex-auto-reset`) across ALL stored accounts, regardless of
  	 * the active model or blocked state. Fire-and-forget: never delays the
  	 * fetch, never runs concurrently with itself or a blocked pass, and the
@@ -8104,6 +8504,1755 @@ index c7005fd..3585c5f 100644
  }
  
  /** One attempt per (account, weekly-reset-minute) block episode. */
+diff --git a/src/session/original-session-lease.ts b/src/session/original-session-lease.ts
+new file mode 100755
+index 0000000..88c8990
+--- /dev/null
++++ b/src/session/original-session-lease.ts
+@@ -0,0 +1,504 @@
++import * as fs from "node:fs";
++import * as path from "node:path";
++import { FileLock } from "@oh-my-pi/pi-natives";
++import { isEnoent, logger, toError } from "@oh-my-pi/pi-utils";
++
++/**
++ * Wire generation of the cooperating original-session ownership regime.
++ *
++ * Bumping this invalidates every existing enrollment record: a record written
++ * by another generation is never adopted, so a future protocol can change the
++ * record shape without silently inheriting stale bindings.
++ */
++export const ORIGINAL_SESSION_OWNERSHIP_PROTOCOL = 1;
++
++/** Exact filesystem identity of an original transcript, as reviewed before admission. */
++export interface NativeFileIdentity {
++	dev: number;
++	ino: number;
++	size: number;
++	mtimeMs: number;
++	ctimeMs: number;
++	birthtimeMs: number;
++}
++
++/** Inode-level identity of a directory or lock sidecar bound by an enrollment. */
++export interface NativeNodeIdentity {
++	dev: number;
++	ino: number;
++}
++
++/**
++ * The requested original was NOT submitted to a writer, and that refusal is
++ * proven to have happened before any effect on the original file, its
++ * enrollment record, or its lock sidecar.
++ *
++ * A cleanup failure is never reported through this class — see
++ * {@link OriginalSessionOutcomeUnknownError}.
++ */
++export class OriginalSessionNotSubmittedError extends Error {
++	readonly code = "ORIGINAL_SESSION_NOT_SUBMITTED" as const;
++	readonly reason: string;
++
++	constructor(reason: string, message: string, options?: { cause?: unknown }) {
++		super(message, options);
++		this.name = "OriginalSessionNotSubmittedError";
++		this.reason = reason;
++	}
++}
++
++/**
++ * Effects on the original may have begun and could not be proven undone.
++ * Callers must treat the original as possibly mutated and possibly still
++ * owned; they must not retry as though nothing happened.
++ */
++export class OriginalSessionOutcomeUnknownError extends Error {
++	readonly code = "OUTCOME_UNKNOWN" as const;
++	readonly reason: string;
++
++	constructor(reason: string, message: string, options?: { cause?: unknown }) {
++		super(message, options);
++		this.name = "OriginalSessionOutcomeUnknownError";
++		this.reason = reason;
++	}
++}
++
++export function notSubmitted(reason: string, message: string, cause?: unknown): OriginalSessionNotSubmittedError {
++	return new OriginalSessionNotSubmittedError(reason, message, cause === undefined ? undefined : { cause });
++}
++
++export function outcomeUnknown(reason: string, message: string, cause?: unknown): OriginalSessionOutcomeUnknownError {
++	return new OriginalSessionOutcomeUnknownError(reason, message, cause === undefined ? undefined : { cause });
++}
++
++export function readNodeIdentity(target: string): NativeNodeIdentity | undefined {
++	const stats = lstatOrUndefined(target);
++	return stats ? { dev: stats.dev, ino: stats.ino } : undefined;
++}
++
++export function sameNodeIdentity(a: NativeNodeIdentity | undefined, b: NativeNodeIdentity | undefined): boolean {
++	return !!a && !!b && a.dev === b.dev && a.ino === b.ino;
++}
++
++/** Field-by-field comparison; every reviewed field must still hold. */
++export function fileIdentityDifference(
++	expected: NativeFileIdentity,
++	actual: NativeFileIdentity,
++): keyof NativeFileIdentity | undefined {
++	for (const field of ["dev", "ino", "size", "mtimeMs", "ctimeMs", "birthtimeMs"] as const) {
++		if (expected[field] !== actual[field]) return field;
++	}
++	return undefined;
++}
++
++function lstatOrUndefined(target: string): fs.Stats | undefined {
++	try {
++		return fs.lstatSync(target);
++	} catch (error) {
++		if (isEnoent(error)) return undefined;
++		throw error;
++	}
++}
++
++/**
++ * A transcript is only a safe ownership target when the path itself is the
++ * single name of a regular file: a symlink hands the write to an unknown
++ * target and a hard link lets a second name alias the owned bytes without
++ * ever contending for the sidecar.
++ */
++export function assertSafeOriginalTarget(file: string, stats: fs.Stats): void {
++	if (stats.isSymbolicLink()) {
++		throw notSubmitted("unsafe-alias", `The original session path is a symbolic link: ${file}`);
++	}
++	if (!stats.isFile()) {
++		throw notSubmitted("unsafe-alias", `The original session path is not a regular file: ${file}`);
++	}
++	if (stats.nlink !== 1) {
++		throw notSubmitted("unsafe-alias", `The original session file has ${stats.nlink} hard links: ${file}`);
++	}
++}
++
++/** Immutable view of an installed lease, safe to hand to observers. */
++export interface OriginalOwnershipView {
++	protocol: typeof ORIGINAL_SESSION_OWNERSHIP_PROTOCOL;
++	enrollmentId: string;
++	registryId: string;
++	nativeId: string;
++	originalFile: string;
++	lockPath: string;
++	commandId: string | undefined;
++	held: boolean;
++}
++
++/**
++ * Every lease this process currently holds, keyed by canonical original file.
++ *
++ * The OS lock is what excludes a competing cooperating process; this map is
++ * what excludes a second manager inside THIS process — including an internal
++ * unmanaged `SessionManager.open()` that never went through admission.
++ */
++const activeLeases = new Map<string, OriginalWriterLease>();
++
++/**
++ * Refuse a write/open against a canonical original owned by a different lease
++ * in this process. Free for every unenrolled manager: with no lease anywhere
++ * in the process the map is empty and this is a single size check.
++ */
++export function assertNoForeignOriginalWriter(target: string, mine: OriginalWriterLease | undefined): void {
++	if (activeLeases.size === 0) return;
++	const holder = activeLeases.get(path.resolve(target));
++	if (!holder || holder === mine || !holder.held) return;
++	throw notSubmitted(
++		"active-writer",
++		`The original session ${holder.originalFile} is owned by an active cooperating writer in this process (enrollment ${holder.enrollmentId}).`,
++	);
++}
++
++/** Durable, path-local proof that a transcript belongs to an enrollment. */
++export interface OriginalEnrollmentMarker {
++	protocol: number;
++	registryId: string;
++	enrollmentId: string;
++	nativeId: string;
++	ownershipDirectory: string;
++}
++
++/**
++ * Where the enrollment marker for `originalFile` lives: a dotfile beside the
++ * transcript, outside the `*.jsonl` namespace the session listing scans.
++ */
++export function originalEnrollmentMarkerPath(originalFile: string): string {
++	const resolved = path.resolve(originalFile);
++	return path.join(path.dirname(resolved), `.${path.basename(resolved)}.original-enrollment.json`);
++}
++
++export function readOriginalEnrollmentMarker(originalFile: string): OriginalEnrollmentMarker | undefined | "unreadable" {
++	const markerPath = originalEnrollmentMarkerPath(originalFile);
++	let raw: string;
++	try {
++		raw = fs.readFileSync(markerPath, "utf-8");
++	} catch (error) {
++		if (isEnoent(error)) return undefined;
++		return "unreadable";
++	}
++	try {
++		const parsed = JSON.parse(raw) as OriginalEnrollmentMarker;
++		if (typeof parsed?.registryId !== "string" || typeof parsed.ownershipDirectory !== "string") return "unreadable";
++		return parsed;
++	} catch {
++		return "unreadable";
++	}
++}
++
++/**
++ * Refuse any patched-SDK open of a transcript that is durably enrolled unless
++ * the caller arrived with the matching admitted lease.
++ *
++ * The process-local map above only sees writers inside THIS process. A desktop
++ * fork, revive, or branch that spawns a DIFFERENT worker and reaches the
++ * enrolled transcript through an ordinary `SessionManager.open()` /
++ * `forkFrom()` has no lease at all, and the previous owner may already be gone,
++ * so nothing in this process would contend. The marker is what makes that
++ * recognisable from the path alone.
++ *
++ * The marker only ever RESTRICTS. Participation is still granted exclusively by
++ * a registry record minted before the first header, so a forged or copied
++ * marker can cause a refusal but can never manufacture an enrollment. A marker
++ * that exists but cannot be understood fails closed for the same reason.
++ */
++export function assertEnrolledSourceAdmitted(target: string, lease: OriginalWriterLease | undefined): void {
++	const resolved = path.resolve(target);
++	const marker = readOriginalEnrollmentMarker(resolved);
++	if (marker === undefined) return;
++	if (marker === "unreadable") {
++		throw notSubmitted(
++			"enrollment-marker-unreadable",
++			`${resolved} carries an unreadable cooperating enrollment marker; refusing to open it as an ordinary session.`,
++		);
++	}
++	if (lease && lease.originalFile === resolved && lease.registryId === marker.registryId && lease.held) return;
++	throw notSubmitted(
++		"enrolled-source-requires-admission",
++		`${resolved} is a cooperating original (enrollment ${marker.enrollmentId}); it can only be opened through native admission, not as an ordinary session.`,
++	);
++}
++
++/** Publish the durable marker. Called only while the writer lease is held. */
++export function writeOriginalEnrollmentMarker(originalFile: string, marker: OriginalEnrollmentMarker): void {
++	fs.writeFileSync(originalEnrollmentMarkerPath(originalFile), `${JSON.stringify(marker, null, 2)}\n`, {
++		flag: "wx",
++		mode: 0o600,
++	});
++}
++
++/**
++ * A real OS lock held by THIS process for one canonical original transcript,
++ * plus the identity bindings that make the ownership meaningful.
++ *
++ * The stable lock path names a kernel lock on Linux/Windows and a physical
++ * sidecar on other Unix platforms. Physical sidecars are never unlinked.
++ * Locking the transcript itself would lose ownership when an atomic rewrite
++ * replaces its inode. Transcript identity is bound separately and rebound
++ * after each publication this lease performed, so outside swaps are detected.
++ */
++export class OriginalWriterLease {
++	readonly protocol = ORIGINAL_SESSION_OWNERSHIP_PROTOCOL;
++	readonly enrollmentId: string;
++	readonly registryId: string;
++	readonly nativeId: string;
++	/** Canonical (`path.resolve`d) original transcript this lease owns. */
++	readonly originalFile: string;
++	readonly parentDirectory: string;
++	readonly lockPath: string;
++	readonly parentIdentity: NativeNodeIdentity;
++	/** Absent only for the pinned Linux/Windows kernel-name backend. */
++	readonly sidecarIdentity: NativeNodeIdentity | undefined;
++
++	#lock: FileLock | undefined;
++	#identity: NativeNodeIdentity | undefined;
++	#commandId: string | undefined;
++	#released = false;
++
++	private constructor(init: {
++		enrollmentId: string;
++		registryId: string;
++		nativeId: string;
++		originalFile: string;
++		lockPath: string;
++		parentIdentity: NativeNodeIdentity;
++		sidecarIdentity: NativeNodeIdentity | undefined;
++		lock: FileLock;
++	}) {
++		this.enrollmentId = init.enrollmentId;
++		this.registryId = init.registryId;
++		this.nativeId = init.nativeId;
++		this.originalFile = init.originalFile;
++		this.parentDirectory = path.dirname(init.originalFile);
++		this.lockPath = init.lockPath;
++		this.parentIdentity = init.parentIdentity;
++		this.sidecarIdentity = init.sidecarIdentity;
++		this.#lock = init.lock;
++	}
++
++	/**
++	 * Take real OS ownership of `originalFile` through its stable lock path, or refuse
++	 * with a proven no-effect `active-writer`. Nothing is written to the
++	 * transcript and no writable handle is opened here.
++	 */
++	static acquire(init: {
++		enrollmentId: string;
++		registryId: string;
++		nativeId: string;
++		originalFile: string;
++		lockPath: string;
++		expectedParentIdentity: NativeNodeIdentity;
++	}): OriginalWriterLease {
++		const originalFile = path.resolve(init.originalFile);
++		const lockPath = path.resolve(init.lockPath);
++
++		const existing = activeLeases.get(originalFile);
++		if (existing?.held) {
++			throw notSubmitted(
++				"active-writer",
++				`The original session ${originalFile} is already owned by enrollment ${existing.enrollmentId} in this process.`,
++			);
++		}
++
++		const parentIdentity = readNodeIdentity(path.dirname(originalFile));
++		if (!parentIdentity) {
++			throw notSubmitted(
++				"parent-missing",
++				`The directory holding the original session no longer exists: ${path.dirname(originalFile)}`,
++			);
++		}
++		if (!sameNodeIdentity(parentIdentity, init.expectedParentIdentity)) {
++			throw notSubmitted(
++				"parent-retargeted",
++				`The directory holding ${originalFile} was replaced since enrollment; its inode no longer matches the recorded one.`,
++			);
++		}
++
++		let lock: FileLock;
++		try {
++			lock = FileLock.tryAcquire(lockPath);
++		} catch (error) {
++			throw notSubmitted(
++				"lock-unavailable",
++				`Could not attempt the ownership lock at ${lockPath}: ${toError(error).message}`,
++				error,
++			);
++		}
++		if (!lock.acquired) {
++			try {
++				lock.release();
++			} catch {
++				// A handle that never won ownership has nothing to relinquish.
++			}
++			throw notSubmitted(
++				"active-writer",
++				`Another process currently owns the original session ${originalFile} (lock ${lockPath}).`,
++			);
++		}
++
++		// pi-natives 18.1.10 uses kernel names on Linux/Windows, not files.
++		// Select by the pinned backend contract, never by a missing sidecar.
++		const kernelNamed = process.platform === "linux" || process.platform === "win32";
++		const sidecarIdentity = kernelNamed ? undefined : readNodeIdentity(lockPath);
++		if (!kernelNamed && !sidecarIdentity) {
++			try {
++				lock.release();
++			} catch (error) {
++				throw outcomeUnknown(
++					"lease-release-failed",
++					`Acquired the ownership lock at ${lockPath} but it vanished and could not be released.`,
++					error,
++				);
++			}
++			throw notSubmitted("sidecar-missing", `The ownership lock sidecar vanished immediately after acquisition: ${lockPath}`);
++		}
++
++		const lease = new OriginalWriterLease({
++			enrollmentId: init.enrollmentId,
++			registryId: init.registryId,
++			nativeId: init.nativeId,
++			originalFile,
++			lockPath,
++			parentIdentity,
++			sidecarIdentity,
++			lock,
++		});
++		activeLeases.set(originalFile, lease);
++		return lease;
++	}
++
++	get held(): boolean {
++		return !this.#released && this.#lock?.acquired === true;
++	}
++
++	get commandId(): string | undefined {
++		return this.#commandId;
++	}
++
++	/** Bound transcript inode, or undefined before the first header exists. */
++	get boundIdentity(): NativeNodeIdentity | undefined {
++		return this.#identity;
++	}
++
++	view(): OriginalOwnershipView {
++		return {
++			protocol: this.protocol,
++			enrollmentId: this.enrollmentId,
++			registryId: this.registryId,
++			nativeId: this.nativeId,
++			originalFile: this.originalFile,
++			lockPath: this.lockPath,
++			commandId: this.#commandId,
++			held: this.held,
++		};
++	}
++
++	/** Attribute this lease to the admission command that won it. */
++	attachCommand(commandId: string): void {
++		this.#commandId = commandId;
++	}
++
++	/** Pin the reviewed transcript inode so a later swap is detected. */
++	bindIdentity(identity: NativeNodeIdentity): void {
++		this.#identity = { dev: identity.dev, ino: identity.ino };
++	}
++
++	/**
++	 * Gate one write against this lease.
++	 *
++	 * `verifyIdentity` is false for a line appended through an already-open,
++	 * already-validated handle and true whenever a fresh handle is opened or
++	 * the whole file is republished.
++	 */
++	assertWritable(target: string, verifyIdentity: boolean): void {
++		if (this.#released) {
++			throw notSubmitted("ownership-released", `The cooperating lease for ${this.originalFile} was already released.`);
++		}
++		if (!this.#lock?.acquired) {
++			throw notSubmitted("ownership-lost", `This process no longer owns the original session ${this.originalFile}.`);
++		}
++		const resolved = path.resolve(target);
++		if (resolved !== this.originalFile) {
++			throw notSubmitted(
++				"file-mismatch",
++				`A cooperating original manager tried to write ${resolved} while owning ${this.originalFile}.`,
++			);
++		}
++		if (this.sidecarIdentity && !sameNodeIdentity(readNodeIdentity(this.lockPath), this.sidecarIdentity)) {
++			throw notSubmitted(
++				"sidecar-retargeted",
++				`The ownership lock sidecar ${this.lockPath} was replaced while the lease was held.`,
++			);
++		}
++		if (!verifyIdentity) return;
++
++		if (!sameNodeIdentity(readNodeIdentity(this.parentDirectory), this.parentIdentity)) {
++			throw notSubmitted(
++				"parent-retargeted",
++				`The directory holding ${this.originalFile} was replaced while the lease was held.`,
++			);
++		}
++
++		const stats = lstatOrUndefined(this.originalFile);
++		if (!stats) {
++			if (this.#identity) {
++				throw notSubmitted("original-missing", `The owned original session file disappeared: ${this.originalFile}`);
++			}
++			// Pre-first-header: the very next write creates the transcript.
++			return;
++		}
++		assertSafeOriginalTarget(this.originalFile, stats);
++		if (!this.#identity) {
++			this.#identity = { dev: stats.dev, ino: stats.ino };
++			return;
++		}
++		if (this.#identity.dev !== stats.dev || this.#identity.ino !== stats.ino) {
++			throw notSubmitted(
++				"identity-retargeted",
++				`The owned original session file at ${this.originalFile} was replaced by a different inode.`,
++			);
++		}
++	}
++
++	/**
++	 * Adopt the inode published by a rewrite this lease just performed. An
++	 * atomic replace legitimately changes the transcript inode; every other
++	 * inode change stays a retarget.
++	 */
++	noteRepublished(): void {
++		if (!this.held) return;
++		const identity = readNodeIdentity(this.originalFile);
++		if (identity) this.#identity = identity;
++	}
++
++	/**
++	 * Relinquish real OS ownership. Only ever called after a terminal drain
++	 * completed successfully; a failed release is an unknown outcome because
++	 * another writer may or may not now be admissible.
++	 */
++	release(): void {
++		if (this.#released) return;
++		const lock = this.#lock;
++		this.#released = true;
++		this.#lock = undefined;
++		if (activeLeases.get(this.originalFile) === this) activeLeases.delete(this.originalFile);
++		try {
++			lock?.release();
++		} catch (error) {
++			logger.error("Failed to release a cooperating original-session lease", {
++				originalFile: this.originalFile,
++				lockPath: this.lockPath,
++				error: toError(error).message,
++			});
++			throw outcomeUnknown(
++				"lease-release-failed",
++				`The cooperating lease for ${this.originalFile} could not be released; another writer may or may not be admissible.`,
++				error,
++			);
++		}
++	}
++}
+diff --git a/src/session/original-session-ownership.ts b/src/session/original-session-ownership.ts
+new file mode 100755
+index 0000000..836319b
+--- /dev/null
++++ b/src/session/original-session-ownership.ts
+@@ -0,0 +1,825 @@
++import { createHash } from "node:crypto";
++import * as fs from "node:fs";
++import * as path from "node:path";
++import { isEnoent, toError } from "@oh-my-pi/pi-utils";
++import {
++	assertSafeOriginalTarget,
++	fileIdentityDifference,
++	type NativeFileIdentity,
++	type NativeNodeIdentity,
++	notSubmitted,
++	ORIGINAL_SESSION_OWNERSHIP_PROTOCOL,
++	type OriginalEnrollmentMarker,
++	originalEnrollmentMarkerPath,
++	OriginalSessionNotSubmittedError,
++	OriginalSessionOutcomeUnknownError,
++	OriginalWriterLease,
++	outcomeUnknown,
++	readNodeIdentity,
++	readOriginalEnrollmentMarker,
++	sameNodeIdentity,
++	writeOriginalEnrollmentMarker,
++} from "./original-session-lease";
++import { SessionManager } from "./session-manager";
++import { FileSessionStorage } from "./session-storage";
++
++export {
++	type NativeFileIdentity,
++	ORIGINAL_SESSION_OWNERSHIP_PROTOCOL,
++	OriginalSessionNotSubmittedError,
++	OriginalSessionOutcomeUnknownError,
++};
++
++/**
++ * Durable proof that one native original transcript was created by a known
++ * cooperating writer under this protocol generation.
++ *
++ * A binding is minted exactly once, by {@link createCooperativeOriginal},
++ * before that original's first header reaches disk. It is never derived from
++ * an observation of an already-existing transcript: an unknown stock original
++ * has no binding and can never acquire one retrospectively.
++ */
++export interface NativeOriginalBinding {
++	protocol: typeof ORIGINAL_SESSION_OWNERSHIP_PROTOCOL;
++	enrollmentId: string;
++	registryId: string;
++	originalFile: string;
++	nativeId: string;
++	recordedCwd: string;
++	canonicalCwd: string;
++}
++
++/**
++ * The reviewed state of an original transcript at the moment a caller decided
++ * to admit it. Structurally the native half of the host's reviewed session
++ * source, which additionally carries the UI candidate id and revision.
++ *
++ * Every field is revalidated under real ownership before a writable open.
++ */
++export interface NativeOriginalSource {
++	originalFile: string;
++	nativeId: string;
++	recordedCwd: string;
++	canonicalCwd: string;
++	contentSha256: string;
++	fileIdentity: NativeFileIdentity;
++}
++
++export type OriginalParticipation =
++	| { ok: true; binding: NativeOriginalBinding }
++	| { ok: false; reason: string; message: string };
++
++interface EnrollmentRecord {
++	protocol: number;
++	enrollmentId: string;
++	registryId: string;
++	nativeId: string;
++	originalFile: string;
++	recordedCwd: string;
++	canonicalCwd: string;
++	lockPath: string;
++	parentIdentity: NativeNodeIdentity;
++	createdAt: string;
++}
++
++interface ObservedOriginal {
++	source: NativeOriginalSource;
++	identity: NativeFileIdentity;
++}
++
++const RECORDS_DIRECTORY = "records";
++const FILES_DIRECTORY = "files";
++const LEASES_DIRECTORY = "leases";
++const PROTOCOL_MARKER = "protocol.json";
++/** Re-reads allowed while a concurrent writer keeps moving the transcript. */
++const OBSERVATION_ATTEMPTS = 4;
++/** The header is the first entry after the fixed-width title slot. */
++const HEADER_SEARCH_LINES = 8;
++
++/**
++ * Namespaced so a registry key can never collide with a key minted by another
++ * protocol generation, and so the two index spaces (by native id, by canonical
++ * path) can never produce the same file name.
++ */
++function registryKey(space: "id" | "file", value: string): string {
++	return createHash("sha256")
++		.update(`omp-original-session-ownership\u0000${ORIGINAL_SESSION_OWNERSHIP_PROTOCOL}\u0000${space}\u0000${value}`)
++		.digest("hex");
++}
++
++function recordPath(ownershipDirectory: string, registryId: string): string {
++	return path.join(ownershipDirectory, RECORDS_DIRECTORY, `${registryId}.json`);
++}
++
++function fileIndexPath(ownershipDirectory: string, originalFile: string): string {
++	return path.join(ownershipDirectory, FILES_DIRECTORY, `${registryKey("file", originalFile)}.json`);
++}
++
++function readJsonFile(target: string): unknown {
++	let raw: string;
++	try {
++		raw = fs.readFileSync(target, "utf-8");
++	} catch (error) {
++		if (isEnoent(error)) return undefined;
++		throw notSubmitted("enrollment-unreadable", `Could not read ${target}: ${toError(error).message}`, error);
++	}
++	try {
++		return JSON.parse(raw) as unknown;
++	} catch (error) {
++		throw notSubmitted("enrollment-unreadable", `The enrollment record at ${target} is not valid JSON.`, error);
++	}
++}
++
++/**
++ * Load the enrollment for `nativeId` and prove it still describes exactly
++ * `originalFile` under this protocol generation.
++ *
++ * The reverse (path to enrollment) index is checked too: a second enrollment
++ * claiming the same canonical transcript, or a duplicate native id pointing at
++ * a different transcript, is a conflict rather than a match.
++ */
++function loadEnrollment(ownershipDirectory: string, nativeId: string, originalFile: string): EnrollmentRecord {
++	const registryId = registryKey("id", nativeId);
++	const record = readJsonFile(recordPath(ownershipDirectory, registryId)) as EnrollmentRecord | undefined;
++	if (!record) {
++		throw notSubmitted(
++			"not-enrolled",
++			`No cooperating enrollment exists for native session ${nativeId}; it was not created by a known cooperating writer.`,
++		);
++	}
++	if (record.protocol !== ORIGINAL_SESSION_OWNERSHIP_PROTOCOL) {
++		throw notSubmitted(
++			"protocol-mismatch",
++			`Enrollment ${record.enrollmentId} uses ownership protocol ${record.protocol}, not ${ORIGINAL_SESSION_OWNERSHIP_PROTOCOL}.`,
++		);
++	}
++	if (record.registryId !== registryId || record.nativeId !== nativeId) {
++		throw notSubmitted(
++			"enrollment-mismatch",
++			`The enrollment record for native session ${nativeId} is self-inconsistent.`,
++		);
++	}
++	if (record.originalFile !== originalFile) {
++		throw notSubmitted(
++			"duplicate-native-id",
++			`Native session ${nativeId} is enrolled for ${record.originalFile}, not ${originalFile}.`,
++		);
++	}
++
++	const index = readJsonFile(fileIndexPath(ownershipDirectory, originalFile)) as { registryId?: string } | undefined;
++	if (!index) {
++		throw notSubmitted("not-enrolled", `No cooperating enrollment claims the transcript ${originalFile}.`);
++	}
++	if (index.registryId !== registryId) {
++		throw notSubmitted(
++			"file-conflict",
++			`The transcript ${originalFile} is claimed by a different enrollment than native session ${nativeId}.`,
++		);
++	}
++	return record;
++}
++
++/**
++ * Prove the registry and the transcript's own durable marker still agree.
++ *
++ * The marker is what every other process recognises the enrolled source by, so
++ * a record without its marker (or with a foreign one) is a broken enrollment
++ * rather than an admissible one, and fails closed.
++ */
++function assertMarkerAgrees(record: EnrollmentRecord, ownershipDirectory: string): void {
++	const marker = readOriginalEnrollmentMarker(record.originalFile);
++	if (marker === undefined) {
++		throw notSubmitted(
++			"enrollment-marker-missing",
++			`${record.originalFile} is registered as enrollment ${record.enrollmentId} but carries no marker at ${originalEnrollmentMarkerPath(record.originalFile)}.`,
++		);
++	}
++	if (marker === "unreadable") {
++		throw notSubmitted(
++			"enrollment-marker-unreadable",
++			`The enrollment marker beside ${record.originalFile} could not be understood.`,
++		);
++	}
++	if (
++		marker.protocol !== ORIGINAL_SESSION_OWNERSHIP_PROTOCOL ||
++		marker.registryId !== record.registryId ||
++		marker.enrollmentId !== record.enrollmentId ||
++		marker.nativeId !== record.nativeId ||
++		path.resolve(marker.ownershipDirectory) !== ownershipDirectory
++	) {
++		throw notSubmitted(
++			"enrollment-marker-mismatch",
++			`The enrollment marker beside ${record.originalFile} describes a different enrollment than the registry.`,
++		);
++	}
++}
++
++/** Locate the session header without loading, migrating, or rewriting anything. */
++function readHeaderFromContent(content: string, originalFile: string): { id: string; cwd: string | undefined } {
++	let start = 0;
++	for (let line = 0; line < HEADER_SEARCH_LINES && start < content.length; line++) {
++		const end = content.indexOf("\n", start);
++		const text = content.slice(start, end === -1 ? content.length : end);
++		start = end === -1 ? content.length : end + 1;
++		if (!text) continue;
++		let parsed: { type?: string; id?: unknown; cwd?: unknown };
++		try {
++			parsed = JSON.parse(text) as { type?: string; id?: unknown; cwd?: unknown };
++		} catch {
++			continue;
++		}
++		if (parsed?.type !== "session") continue;
++		if (typeof parsed.id !== "string" || parsed.id.length === 0) break;
++		return { id: parsed.id, cwd: typeof parsed.cwd === "string" ? parsed.cwd : undefined };
++	}
++	throw notSubmitted("invalid-header", `The original session ${originalFile} has no usable session header.`);
++}
++
++/**
++ * Read the transcript and prove the bytes did not move under the reader.
++ *
++ * Without the identity sandwich a concurrent writer could append between the
++ * stat and the read, and the returned digest would describe a file state that
++ * never existed as a whole.
++ */
++function observeSourceBytes(originalFile: string): ObservedOriginal {
++	for (let attempt = 0; attempt < OBSERVATION_ATTEMPTS; attempt++) {
++		let stats: fs.Stats;
++		try {
++			stats = fs.lstatSync(originalFile);
++		} catch (error) {
++			if (isEnoent(error)) {
++				throw notSubmitted("original-missing", `The original session file does not exist: ${originalFile}`);
++			}
++			throw notSubmitted("original-unreadable", `Could not stat ${originalFile}: ${toError(error).message}`, error);
++		}
++		assertSafeOriginalTarget(originalFile, stats);
++		const before: NativeFileIdentity = {
++			dev: stats.dev,
++			ino: stats.ino,
++			size: stats.size,
++			mtimeMs: stats.mtimeMs,
++			ctimeMs: stats.ctimeMs,
++			birthtimeMs: stats.birthtimeMs,
++		};
++
++		let content: string;
++		try {
++			content = fs.readFileSync(originalFile, "utf-8");
++		} catch (error) {
++			if (isEnoent(error)) {
++				throw notSubmitted("original-missing", `The original session file disappeared while reading: ${originalFile}`);
++			}
++			throw notSubmitted("original-unreadable", `Could not read ${originalFile}: ${toError(error).message}`, error);
++		}
++
++		let after: fs.Stats;
++		try {
++			after = fs.lstatSync(originalFile);
++		} catch {
++			continue;
++		}
++		if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size) continue;
++		if (after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) continue;
++
++		const header = readHeaderFromContent(content, originalFile);
++		if (!header.cwd) {
++			throw notSubmitted("cwd-missing", `The original session ${originalFile} records no working directory.`);
++		}
++		const recordedCwd = path.resolve(header.cwd);
++		let canonicalCwd: string;
++		try {
++			canonicalCwd = fs.realpathSync(recordedCwd);
++		} catch (error) {
++			throw notSubmitted(
++				"cwd-unusable",
++				`The working directory recorded by ${originalFile} is not resolvable: ${recordedCwd}`,
++				error,
++			);
++		}
++		return {
++			identity: before,
++			source: {
++				originalFile,
++				nativeId: header.id,
++				recordedCwd,
++				canonicalCwd,
++				contentSha256: createHash("sha256").update(content, "utf-8").digest("hex"),
++				fileIdentity: before,
++			},
++		};
++	}
++	throw notSubmitted(
++		"unstable-original",
++		`The original session ${originalFile} kept changing while it was being observed; no stable state could be recorded.`,
++	);
++}
++
++function assertSourceShape(source: NativeOriginalSource): void {
++	if (typeof source?.originalFile !== "string" || !path.isAbsolute(source.originalFile)) {
++		throw notSubmitted("invalid-source", "A reviewed native source must carry an absolute original file path.");
++	}
++	if (typeof source.nativeId !== "string" || source.nativeId.length === 0) {
++		throw notSubmitted("invalid-source", "A reviewed native source must carry a native session id.");
++	}
++	if (typeof source.contentSha256 !== "string" || source.contentSha256.length !== 64) {
++		throw notSubmitted("invalid-source", "A reviewed native source must carry a SHA-256 content digest.");
++	}
++	if (!source.fileIdentity || typeof source.fileIdentity.ino !== "number") {
++		throw notSubmitted("invalid-source", "A reviewed native source must carry a complete file identity.");
++	}
++}
++
++function assertBindingShape(binding: NativeOriginalBinding): void {
++	if (binding?.protocol !== ORIGINAL_SESSION_OWNERSHIP_PROTOCOL) {
++		throw notSubmitted(
++			"protocol-mismatch",
++			`This build speaks ownership protocol ${ORIGINAL_SESSION_OWNERSHIP_PROTOCOL}; the binding claims ${binding?.protocol}.`,
++		);
++	}
++	for (const field of [
++		"enrollmentId",
++		"registryId",
++		"originalFile",
++		"nativeId",
++		"recordedCwd",
++		"canonicalCwd",
++	] as const) {
++		if (typeof binding[field] !== "string" || binding[field].length === 0) {
++			throw notSubmitted("invalid-binding", `The native binding is missing ${field}.`);
++		}
++	}
++	if (!path.isAbsolute(binding.originalFile) || path.resolve(binding.originalFile) !== binding.originalFile) {
++		throw notSubmitted("invalid-binding", `The native binding path is not canonical: ${binding.originalFile}`);
++	}
++}
++
++function bindingFor(record: EnrollmentRecord): NativeOriginalBinding {
++	return {
++		protocol: ORIGINAL_SESSION_OWNERSHIP_PROTOCOL,
++		enrollmentId: record.enrollmentId,
++		registryId: record.registryId,
++		originalFile: record.originalFile,
++		nativeId: record.nativeId,
++		recordedCwd: record.recordedCwd,
++		canonicalCwd: record.canonicalCwd,
++	};
++}
++
++/**
++ * Decide whether a reviewed original participates in the cooperating regime.
++ *
++ * Strictly readonly: no directory is created, no lock is attempted, and no
++ * native session is opened. A refusal is a value rather than a throw, because
++ * a non-participating original is an ordinary answer, not a failure.
++ */
++export async function inspectOriginalParticipation(
++	ownershipDirectory: string,
++	source: NativeOriginalSource,
++): Promise<OriginalParticipation> {
++	try {
++		assertSourceShape(source);
++		const resolvedDirectory = path.resolve(ownershipDirectory);
++		const originalFile = path.resolve(source.originalFile);
++		const record = loadEnrollment(resolvedDirectory, source.nativeId, originalFile);
++		assertMarkerAgrees(record, resolvedDirectory);
++
++		if (record.recordedCwd !== path.resolve(source.recordedCwd) || record.canonicalCwd !== source.canonicalCwd) {
++			throw notSubmitted(
++				"cwd-mismatch",
++				`Enrollment ${record.enrollmentId} records ${record.recordedCwd}, not the reviewed ${source.recordedCwd}.`,
++			);
++		}
++		if (!sameNodeIdentity(readNodeIdentity(path.dirname(originalFile)), record.parentIdentity)) {
++			throw notSubmitted("parent-retargeted", `The directory holding ${originalFile} was replaced since enrollment.`);
++		}
++
++		const observed = observeSourceBytes(originalFile);
++		const drift = fileIdentityDifference(source.fileIdentity, observed.identity);
++		if (drift) {
++			throw notSubmitted(
++				"identity-mismatch",
++				`The reviewed original changed on disk: ${drift} no longer matches the reviewed value.`,
++			);
++		}
++		if (observed.source.contentSha256 !== source.contentSha256) {
++			throw notSubmitted("digest-mismatch", `The reviewed digest for ${originalFile} no longer matches its content.`);
++		}
++		if (observed.source.nativeId !== record.nativeId) {
++			throw notSubmitted(
++				"native-id-mismatch",
++				`${originalFile} now carries native session ${observed.source.nativeId}, not the enrolled ${record.nativeId}.`,
++			);
++		}
++
++		return { ok: true, binding: bindingFor(record) };
++	} catch (error) {
++		if (error instanceof OriginalSessionNotSubmittedError) {
++			return { ok: false, reason: error.reason, message: error.message };
++		}
++		return { ok: false, reason: "inspection-failed", message: toError(error).message };
++	}
++}
++
++/**
++ * Re-observe an enrolled original without taking ownership.
++ *
++ * Deliberately performs no directory migration, no header rewrite and no
++ * writable open: callers use this to refresh a reviewed source before a later
++ * admission, and an observation that mutated the original would destroy the
++ * very identity it reports.
++ */
++export async function observeEnrolledOriginal(
++	ownershipDirectory: string,
++	binding: NativeOriginalBinding,
++): Promise<NativeOriginalSource> {
++	assertBindingShape(binding);
++	const ownershipRoot = path.resolve(ownershipDirectory);
++	const record = loadEnrollment(ownershipRoot, binding.nativeId, binding.originalFile);
++	assertMarkerAgrees(record, ownershipRoot);
++	if (record.enrollmentId !== binding.enrollmentId) {
++		throw notSubmitted(
++			"enrollment-mismatch",
++			`The binding claims enrollment ${binding.enrollmentId}; the registry holds ${record.enrollmentId}.`,
++		);
++	}
++
++	const observed = observeSourceBytes(binding.originalFile).source;
++	if (observed.nativeId !== binding.nativeId) {
++		throw notSubmitted(
++			"native-id-mismatch",
++			`${binding.originalFile} now carries native session ${observed.nativeId}, not the enrolled ${binding.nativeId}.`,
++		);
++	}
++	return observed;
++}
++
++/**
++ * Create a brand-new original that participates in the cooperating regime.
++ *
++ * Ownership and the enrollment record are established BEFORE the first header
++ * is published, which is what makes the resulting provenance meaningful: the
++ * regime is a property of how the transcript was born, never a marker that can
++ * be stamped onto an unknown stock transcript later.
++ */
++export async function createCooperativeOriginal(options: {
++	ownershipDirectory: string;
++	cwd: string;
++	sessionDirectory: string;
++}): Promise<{ manager: SessionManager; binding: NativeOriginalBinding }> {
++	const ownershipDirectory = path.resolve(options.ownershipDirectory);
++	const cwd = path.resolve(options.cwd);
++	let canonicalCwd: string;
++	try {
++		canonicalCwd = fs.realpathSync(cwd);
++	} catch (error) {
++		throw notSubmitted("cwd-unusable", `The requested working directory is not resolvable: ${cwd}`, error);
++	}
++	prepareOwnershipDirectory(ownershipDirectory);
++
++	const manager = SessionManager.create(cwd, path.resolve(options.sessionDirectory), new FileSessionStorage());
++	const originalFile = manager.getSessionFile();
++	if (!originalFile) {
++		throw notSubmitted("not-persisted", "A cooperating original requires a persisted session file.");
++	}
++	const resolvedOriginal = path.resolve(originalFile);
++	if (fs.existsSync(resolvedOriginal)) {
++		throw notSubmitted(
++			"original-exists",
++			`Refusing to enroll ${resolvedOriginal}: it already exists, and an existing transcript can never be enrolled retrospectively.`,
++		);
++	}
++	const parentIdentity = readNodeIdentity(path.dirname(resolvedOriginal));
++	if (!parentIdentity) {
++		throw notSubmitted("parent-missing", `The session directory does not exist: ${path.dirname(resolvedOriginal)}`);
++	}
++
++	const nativeId = manager.getSessionId();
++	const registryId = registryKey("id", nativeId);
++	const record: EnrollmentRecord = {
++		protocol: ORIGINAL_SESSION_OWNERSHIP_PROTOCOL,
++		enrollmentId: Bun.randomUUIDv7(),
++		registryId,
++		nativeId,
++		originalFile: resolvedOriginal,
++		recordedCwd: cwd,
++		canonicalCwd,
++		lockPath: path.join(ownershipDirectory, LEASES_DIRECTORY, `${registryId}.lock`),
++		parentIdentity,
++		createdAt: new Date().toISOString(),
++	};
++
++	// Real ownership precedes the registry write, which precedes the header:
++	// no window exists in which the transcript exists without an owner.
++	const lease = OriginalWriterLease.acquire({
++		enrollmentId: record.enrollmentId,
++		registryId,
++		nativeId,
++		originalFile: resolvedOriginal,
++		lockPath: record.lockPath,
++		expectedParentIdentity: parentIdentity,
++	});
++
++	const marker: OriginalEnrollmentMarker = {
++		protocol: ORIGINAL_SESSION_OWNERSHIP_PROTOCOL,
++		registryId,
++		enrollmentId: record.enrollmentId,
++		nativeId,
++		ownershipDirectory,
++	};
++	const written = { record: false, index: false, marker: false };
++	try {
++		try {
++			fs.writeFileSync(recordPath(ownershipDirectory, registryId), `${JSON.stringify(record, null, 2)}\n`, {
++				flag: "wx",
++				mode: 0o600,
++			});
++			written.record = true;
++		} catch (error) {
++			if (!hasCode(error, "EEXIST")) throw error;
++			throw notSubmitted(
++				"duplicate-native-id",
++				`Native session ${nativeId} is already enrolled; refusing to mint a conflicting duplicate.`,
++			);
++		}
++		try {
++			fs.writeFileSync(fileIndexPath(ownershipDirectory, resolvedOriginal), `${JSON.stringify({ registryId })}\n`, {
++				flag: "wx",
++				mode: 0o600,
++			});
++			written.index = true;
++		} catch (error) {
++			if (!hasCode(error, "EEXIST")) throw error;
++			throw notSubmitted(
++				"file-conflict",
++				`${resolvedOriginal} is already claimed by another enrollment; refusing to mint a conflicting alias.`,
++			);
++		}
++		try {
++			// Durable, path-local recognition: from here on any patched open of
++			// this transcript that arrives without the matching admitted lease
++			// refuses, in this process or any other.
++			writeOriginalEnrollmentMarker(resolvedOriginal, marker);
++			written.marker = true;
++		} catch (error) {
++			if (!hasCode(error, "EEXIST")) throw error;
++			throw notSubmitted(
++				"file-conflict",
++				`${resolvedOriginal} already carries a cooperating enrollment marker; refusing to mint a second one.`,
++			);
++		}
++	} catch (error) {
++		throw unwindEnrollment(ownershipDirectory, registryId, resolvedOriginal, lease, written, error);
++	}
++
++	manager.adoptOriginalOwnership(lease);
++	try {
++		await manager.ensureOnDisk();
++	} catch (error) {
++		// The first header may or may not have been published. The lease is
++		// deliberately retained: releasing it would advertise the original as
++		// free while its on-disk state is unknown.
++		manager.seal();
++		throw outcomeUnknown(
++			"initial-header-failed",
++			`The first header for ${resolvedOriginal} could not be published; ownership is retained and its state is unknown.`,
++			error,
++		);
++	}
++
++	return { manager, binding: bindingFor(record) };
++}
++
++function prepareOwnershipDirectory(ownershipDirectory: string): void {
++	for (const directory of [RECORDS_DIRECTORY, FILES_DIRECTORY, LEASES_DIRECTORY]) {
++		fs.mkdirSync(path.join(ownershipDirectory, directory), { recursive: true, mode: 0o700 });
++	}
++	const markerPath = path.join(ownershipDirectory, PROTOCOL_MARKER);
++	const marker = readJsonFile(markerPath) as { protocol?: number } | undefined;
++	if (marker) {
++		if (marker.protocol === ORIGINAL_SESSION_OWNERSHIP_PROTOCOL) return;
++		throw notSubmitted(
++			"protocol-mismatch",
++			`${ownershipDirectory} holds ownership protocol ${marker.protocol}; this build speaks ${ORIGINAL_SESSION_OWNERSHIP_PROTOCOL}.`,
++		);
++	}
++	try {
++		fs.writeFileSync(markerPath, `${JSON.stringify({ protocol: ORIGINAL_SESSION_OWNERSHIP_PROTOCOL })}\n`, {
++			flag: "wx",
++			mode: 0o600,
++		});
++	} catch (error) {
++		// A concurrent cooperating writer claimed the same generation first.
++		if (!hasCode(error, "EEXIST")) throw error;
++	}
++}
++
++/**
++ * Undo a partially written enrollment. The original never existed and no
++ * header was published, so a clean unwind keeps the refusal a proven
++ * no-effect one; a failed unwind must not be reported as such.
++ */
++function unwindEnrollment(
++	ownershipDirectory: string,
++	registryId: string,
++	originalFile: string,
++	lease: OriginalWriterLease,
++	written: { record: boolean; index: boolean; marker: boolean },
++	cause: unknown,
++): never {
++	const cleanupFailures: Error[] = [];
++	const remove = (target: string) => {
++		try {
++			fs.rmSync(target);
++		} catch (error) {
++			if (!isEnoent(error)) cleanupFailures.push(toError(error));
++		}
++	};
++	if (written.marker) remove(originalEnrollmentMarkerPath(originalFile));
++	if (written.index) remove(fileIndexPath(ownershipDirectory, originalFile));
++	if (written.record) remove(recordPath(ownershipDirectory, registryId));
++	try {
++		lease.release();
++	} catch (error) {
++		cleanupFailures.push(toError(error));
++	}
++	if (cleanupFailures.length > 0) {
++		throw outcomeUnknown(
++			"enrollment-cleanup-failed",
++			`A rejected enrollment for registry ${registryId} could not be fully unwound: ${cleanupFailures
++				.map(failure => failure.message)
++				.join("; ")}`,
++			cause,
++		);
++	}
++	throw cause;
++}
++
++/**
++ * Take real writer-process ownership of an already-enrolled original and open
++ * it as the exact native session it already is.
++ *
++ * Ordering is the whole contract: the OS lock is taken first, every reviewed
++ * fact is revalidated while it is held, and only then does a writable open
++ * happen. A refusal before that open is therefore proven to have had no
++ * effect; anything that fails afterwards is an unknown outcome and says so.
++ */
++export async function openAdmittedOriginal(options: {
++	ownershipDirectory: string;
++	binding: NativeOriginalBinding;
++	source: NativeOriginalSource;
++	commandId: string;
++}): Promise<SessionManager> {
++	const { binding, source, commandId } = options;
++	assertBindingShape(binding);
++	assertSourceShape(source);
++	if (typeof commandId !== "string" || commandId.length === 0) {
++		throw notSubmitted("invalid-command", "An admission requires a command id to attribute ownership to.");
++	}
++
++	const originalFile = path.resolve(source.originalFile);
++	if (originalFile !== binding.originalFile) {
++		throw notSubmitted(
++			"binding-source-mismatch",
++			`The reviewed source describes ${originalFile}; the binding owns ${binding.originalFile}.`,
++		);
++	}
++	if (source.nativeId !== binding.nativeId) {
++		throw notSubmitted(
++			"binding-source-mismatch",
++			`The reviewed source carries native session ${source.nativeId}; the binding claims ${binding.nativeId}.`,
++		);
++	}
++	if (path.resolve(source.recordedCwd) !== binding.recordedCwd || source.canonicalCwd !== binding.canonicalCwd) {
++		throw notSubmitted(
++			"binding-source-mismatch",
++			`The reviewed working directory ${source.recordedCwd} does not match the enrolled ${binding.recordedCwd}.`,
++		);
++	}
++
++	const ownershipDirectory = path.resolve(options.ownershipDirectory);
++	const record = loadEnrollment(ownershipDirectory, binding.nativeId, originalFile);
++	if (record.enrollmentId !== binding.enrollmentId || record.registryId !== binding.registryId) {
++		throw notSubmitted(
++			"enrollment-mismatch",
++			`The binding claims enrollment ${binding.enrollmentId}; the registry holds ${record.enrollmentId}.`,
++		);
++	}
++	if (record.recordedCwd !== binding.recordedCwd || record.canonicalCwd !== binding.canonicalCwd) {
++		throw notSubmitted(
++			"cwd-mismatch",
++			`Enrollment ${record.enrollmentId} records ${record.recordedCwd}, not the requested ${binding.recordedCwd}.`,
++		);
++	}
++
++	// Real OS ownership first: everything below is validated while no other
++	// cooperating writer can be mutating the transcript.
++	const lease = OriginalWriterLease.acquire({
++		enrollmentId: record.enrollmentId,
++		registryId: record.registryId,
++		nativeId: record.nativeId,
++		originalFile,
++		lockPath: record.lockPath,
++		expectedParentIdentity: record.parentIdentity,
++	});
++
++	let observed: ObservedOriginal;
++	try {
++		observed = revalidateUnderOwnership(binding, source, originalFile, record, ownershipDirectory);
++	} catch (error) {
++		throw releaseAfterPreEffectRefusal(lease, error);
++	}
++
++	lease.bindIdentity(observed.identity);
++	lease.attachCommand(commandId);
++
++	let manager: SessionManager;
++	try {
++		manager = await SessionManager.open(originalFile, path.dirname(originalFile), new FileSessionStorage(), {
++			suppressBreadcrumb: true,
++			originalOwnership: lease,
++		});
++	} catch (error) {
++		// The open owns the lease from the moment it is handed in, and a load
++		// failure can leave migration or repair work half-applied. Ownership is
++		// retained so nothing else claims the original on this evidence.
++		if (error instanceof OriginalSessionNotSubmittedError) throw error;
++		if (error instanceof OriginalSessionOutcomeUnknownError) throw error;
++		throw outcomeUnknown(
++			"open-failed",
++			`Opening the admitted original ${originalFile} failed after ownership was taken: ${toError(error).message}`,
++			error,
++		);
++	}
++
++	const openedFile = manager.getSessionFile();
++	if (
++		manager.getSessionId() !== binding.nativeId ||
++		!openedFile ||
++		path.resolve(openedFile) !== originalFile ||
++		path.resolve(manager.getRecordedCwd() ?? "") !== binding.recordedCwd
++	) {
++		throw outcomeUnknown(
++			"post-open-identity-drift",
++			`The admitted manager for ${originalFile} does not report the enrolled identity; ownership is retained.`,
++		);
++	}
++	return manager;
++}
++
++/** Every reviewed fact, re-proven while the writer lock is held. */
++function revalidateUnderOwnership(
++	binding: NativeOriginalBinding,
++	source: NativeOriginalSource,
++	originalFile: string,
++	record: EnrollmentRecord,
++	ownershipDirectory: string,
++): ObservedOriginal {
++	assertMarkerAgrees(record, ownershipDirectory);
++	const observed = observeSourceBytes(originalFile);
++	const drift = fileIdentityDifference(source.fileIdentity, observed.identity);
++	if (drift) {
++		throw notSubmitted(
++			"identity-mismatch",
++			`The reviewed original changed before admission: ${drift} no longer matches the reviewed value.`,
++		);
++	}
++	if (observed.source.contentSha256 !== source.contentSha256) {
++		throw notSubmitted("digest-mismatch", `The reviewed digest for ${originalFile} no longer matches its content.`);
++	}
++	if (observed.source.nativeId !== binding.nativeId) {
++		throw notSubmitted(
++			"native-id-mismatch",
++			`${originalFile} carries native session ${observed.source.nativeId}, not the enrolled ${binding.nativeId}.`,
++		);
++	}
++	if (observed.source.recordedCwd !== binding.recordedCwd || observed.source.canonicalCwd !== binding.canonicalCwd) {
++		throw notSubmitted(
++			"cwd-mismatch",
++			`${originalFile} records working directory ${observed.source.recordedCwd}, not the enrolled ${binding.recordedCwd}.`,
++		);
++	}
++	return observed;
++}
++
++/**
++ * A refusal proven to precede every effect must also leave no ownership
++ * behind. When the release itself fails the refusal is no longer provably
++ * clean, so the outcome is reported as unknown instead.
++ */
++function releaseAfterPreEffectRefusal(lease: OriginalWriterLease, cause: unknown): never {
++	try {
++		lease.release();
++	} catch (error) {
++		throw outcomeUnknown(
++			"lease-release-failed",
++			`The original was refused before any effect, but ownership could not be relinquished: ${toError(error).message}`,
++			cause,
++		);
++	}
++	throw cause;
++}
++
++function hasCode(error: unknown, code: string): boolean {
++	return (error as NodeJS.ErrnoException | undefined)?.code === code;
++}
+diff --git a/src/session/session-listing.ts b/src/session/session-listing.ts
+index 1d9cff4..4830c4d 100644
+--- a/src/session/session-listing.ts
++++ b/src/session/session-listing.ts
+@@ -3,6 +3,7 @@ import * as path from "node:path";
+ import type { Message } from "@oh-my-pi/pi-ai";
+ import { getSessionsDir, logger, parseJsonlLenient, toError } from "@oh-my-pi/pi-utils";
+ import { LRUCache } from "@oh-my-pi/pi-utils/lru";
++import { readOriginalEnrollmentMarker } from "./original-session-lease";
+ import { computeDefaultSessionDir } from "./session-paths";
+ import { FileSessionStorage, type SessionStorage, type SessionStorageStat } from "./session-storage";
+ import { lookupSessionTitle, recordSessionTitle } from "./title-index";
+@@ -565,6 +566,16 @@ export async function recoverOrphanedBackups(sessionDir: string, storage: Sessio
+ 	}
+ 	for (const [primaryPath, { backup }] of candidates) {
+ 		if (storage.existsSync(primaryPath)) continue;
++		// A directory scan must never restore bytes onto an enrolled original.
++		// Nothing here holds its writer lease, and the promoted backup carries
++		// unproven provenance, so this is a native file effect outside admission.
++		if (readOriginalEnrollmentMarker(primaryPath) !== undefined) {
++			logger.warn("Left an orphaned backup in place beside a cooperating original", {
++				sessionFile: primaryPath,
++				backupPath: backup,
++			});
++			continue;
++		}
+ 		try {
+ 			await storage.rename(backup, primaryPath);
+ 			logger.warn("Recovered orphaned session backup", {
+diff --git a/src/session/session-manager.ts b/src/session/session-manager.ts
+index 6561abc..b3efbc2 100644
+--- a/src/session/session-manager.ts
++++ b/src/session/session-manager.ts
+@@ -32,6 +32,13 @@ import {
+ 	sanitizeRehydratedOpenAIResponsesAssistantMessage,
+ 	stripInternalDetailsFields,
+ } from "./messages";
++import {
++	assertEnrolledSourceAdmitted,
++	assertNoForeignOriginalWriter,
++	notSubmitted,
++	type OriginalOwnershipView,
++	type OriginalWriterLease,
++} from "./original-session-lease";
+ import { type BuildSessionContextOptions, buildSessionContext, type SessionContext } from "./session-context";
+ import {
+ 	type BranchSummaryEntry,
+@@ -569,6 +576,15 @@ export class SessionManager {
+ 	#breadcrumbFresh = false;
+ 	#sessionNameChangedCallbacks = new Set<() => void>();
+ 	#persistenceErrorCallbacks = new Set<(error: Error) => void>();
++	/**
++	 * Real writer-process ownership of this manager's original transcript,
++	 * installed only for a session that was admitted through — or created by —
++	 * the cooperating original-session regime. Managers outside that regime
++	 * leave it undefined and behave exactly as they always have: participation
++	 * is a property of a known enrollment, never something inferred from a
++	 * manager that merely happens to hold a file.
++	 */
++	#originalLease: OriginalWriterLease | undefined;
+ 
+ 	private constructor(cwd: string, sessionDir: string, persist: boolean, storage: SessionStorage) {
+ 		this.#cwd = cwd;
+@@ -580,6 +596,117 @@ export class SessionManager {
+ 		if (persist && sessionDir) this.#storage.ensureDirSync(sessionDir);
+ 	}
+ 
++	/**
++	 * Bind this manager to a lease that is already held by this process.
++	 *
++	 * Only the cooperating admission path calls this, and only before the
++	 * manager has opened anything writable, so the lease is in place before the
++	 * first header of a new original and before the first writable open of an
++	 * admitted one.
++	 */
++	adoptOriginalOwnership(lease: OriginalWriterLease): void {
++		if (this.#originalLease) {
++			throw notSubmitted(
++				"ownership-already-installed",
++				`This session manager already owns ${this.#originalLease.originalFile}.`,
++			);
++		}
++		const sessionFile = this.#sessionFile;
++		if (!sessionFile || path.resolve(sessionFile) !== lease.originalFile) {
++			throw notSubmitted(
++				"file-mismatch",
++				`A lease for ${lease.originalFile} cannot be installed on a manager holding ${sessionFile ?? "no file"}.`,
++			);
++		}
++		if (!lease.held) {
++			throw notSubmitted("ownership-lost", `The lease for ${lease.originalFile} is not held by this process.`);
++		}
++		this.#originalLease = lease;
++	}
++
++	/** Readonly ownership view, or undefined for a manager outside the regime. */
++	getOriginalOwnership(): OriginalOwnershipView | undefined {
++		return this.#originalLease?.view();
++	}
++
++	/**
++	 * Refuse a session transition this regime has not proven, BEFORE it has any
++	 * effect on native identity, files, or provider state.
++	 *
++	 * The admitted regime supports exactly opening and resuming the original it
++	 * was admitted for. Switch, move, revive-elsewhere, new, fork and branch
++	 * all retarget or duplicate native identity, and none of them has an
++	 * accepted owning lifetime here, so they are rejected rather than allowed
++	 * to fall through to an ordinary unmanaged native transition.
++	 */
++	assertOriginalTransitionAllowed(action: string): void {
++		const lease = this.#originalLease;
++		if (!lease) return;
++		throw notSubmitted(
++			"unsupported-transition",
++			`Cannot ${action}: this session is the cooperating original ${lease.originalFile}, whose regime supports only open and resume.`,
++		);
++	}
++
++	/**
++	 * Refuse to repoint an enrolled manager at anything other than the exact
++	 * original it owns. Resuming the same canonical file is the supported
++	 * regime; every other target is a native file transition and is rejected
++	 * before the current transcript, writer, or breadcrumb is touched.
++	 */
++	#assertOriginalFileRetained(target: string | undefined): void {
++		const lease = this.#originalLease;
++		if (!lease) return;
++		if (target && path.resolve(target) === lease.originalFile) return;
++		throw notSubmitted(
++			"unsupported-transition",
++			`Cannot repoint the cooperating original ${lease.originalFile} at ${target ?? "no file"}.`,
++		);
++	}
++
++	/**
++	 * Gate one write against the cooperating regime.
++	 *
++	 * Two distinct guarantees: an enrolled manager may only write the exact
++	 * file it owns, and any OTHER manager in this process — including an
++	 * internal unmanaged `open()` that never went through admission — is
++	 * refused the owned file outright. `verifyIdentity` is false only for a
++	 * line going through an already-validated open handle.
++	 */
++	#guardOriginalWrite(target: string, verifyIdentity: boolean): void {
++		const lease = this.#originalLease;
++		if (lease) {
++			lease.assertWritable(target, verifyIdentity);
++			return;
++		}
++		assertNoForeignOriginalWriter(target, undefined);
++	}
++
++	/**
++	 * Adopt the inode a full-file republication just created. An atomic replace
++	 * legitimately swaps the transcript inode; without this the lease's own
++	 * rewrite would look like somebody else's retarget.
++	 */
++	#rebindOriginalAfterPublish(): void {
++		this.#originalLease?.noteRepublished();
++	}
++
++	/**
++	 * Hand ownership back, but only once the terminal drain actually succeeded.
++	 *
++	 * `seal()` marks the terminal barrier and `close()` performs the drain, so
++	 * a sealed manager whose close completed without a latched disk failure and
++	 * without a surviving writer is the only state in which the original is
++	 * provably quiescent. Every other outcome retains the lease: an original
++	 * whose last write is uncertain must not be advertised as free.
++	 */
++	#releaseOriginalOwnershipAfterTerminalDrain(): void {
++		const lease = this.#originalLease;
++		if (!lease || !this.#released) return;
++		if (this.#writer?.isOpen()) return;
++		lease.release();
++	}
++
+ 	#rememberBreadcrumb(cwd: string, sessionFile: string, fresh = false): void {
+ 		this.#breadcrumbFresh = fresh;
+ 		if (!this.#suppressBreadcrumb) writeTerminalBreadcrumb(cwd, sessionFile, fresh);
+@@ -759,10 +886,12 @@ export class SessionManager {
+ 					]);
+ 				}
+ 				const body = this.#fileBody();
++				this.#guardOriginalWrite(sessionFile, true);
+ 				try {
+ 					await this.#storage.writeTextAtomic(sessionFile, body, {
+ 						commitGuard: () => !this.#released && this.#diskEpoch === epoch,
+ 					});
++					this.#rebindOriginalAfterPublish();
+ 				} catch (error) {
+ 					const recoveryErrors = [toError(error)];
+ 					try {
+@@ -804,7 +933,9 @@ export class SessionManager {
+ 	#appendWriter(): SessionStorageWriter {
+ 		if (!this.#sessionFile) throw new Error("Cannot open a session writer before a session file exists");
+ 
+-		if (this.#writer?.isOpen()) return this.#writer;
++		const reusable = this.#writer?.isOpen() === true;
++		this.#guardOriginalWrite(this.#sessionFile, !reusable);
++		if (reusable) return this.#writer!;
+ 
+ 		this.#writer = this.#storage.openWriter(this.#sessionFile, {
+ 			flags: "a",
+@@ -872,10 +1003,15 @@ export class SessionManager {
+ 
+ 		try {
+ 			const body = this.#fileBody();
++			// Refusing here latches the disk failure exactly like a rejected
++			// write, so an ownership loss surfaces through flush/close rather
++			// than throwing out of a non-throwing append.
++			this.#guardOriginalWrite(targetPath, true);
+ 			this.#diskEpoch++;
+ 			this.#diskTail = Promise.resolve();
+ 			this.#closeWriterEventually();
+ 			this.#storage.writeTextSync(targetPath, body);
++			this.#rebindOriginalAfterPublish();
+ 			this.#clearDiskError();
+ 			// Only mark the manager current when writing the active session path.
+ 			// Mid-move writes update the live relocation path; `#sessionFile` is
+@@ -944,9 +1080,11 @@ export class SessionManager {
+ 				const sessionFile = this.#sessionFile;
+ 				if (!sessionFile) return false;
+ 				if (this.#diskEpoch !== epoch) return false;
++				this.#guardOriginalWrite(sessionFile, true);
+ 				await this.#storage.writeTextAtomic(sessionFile, this.#fileBody(), {
+ 					commitGuard: () => !this.#released && this.#diskEpoch === epoch,
+ 				});
++				this.#rebindOriginalAfterPublish();
+ 				if (this.#diskEpoch !== epoch) return false;
+ 			} while (this.#atomicRewriteDirty);
+ 			return true;
+@@ -1080,6 +1218,7 @@ export class SessionManager {
+ 				if (!sessionFile) return;
+ 				try {
+ 					await this.#appendWriter().append(line);
++					this.#guardOriginalWrite(sessionFile, true);
+ 					await this.#storage.updateSessionTitle(sessionFile, update);
+ 					if (this.#diskEpoch === epoch) this.#fileIsCurrent = true;
+ 				} catch {
+@@ -1106,6 +1245,7 @@ export class SessionManager {
+ 	}
+ 
+ 	#resetToNewSession(options?: NewSessionOptions, forcedSessionFile?: string): string | undefined {
++		this.assertOriginalTransitionAllowed("start a new native session");
+ 		this.#diskTail = Promise.resolve();
+ 		this.#clearDiskError();
+ 		this.#reconcileSessionDirForFallback();
+@@ -1330,6 +1470,9 @@ export class SessionManager {
+ 	 * Set `persist` false when the original session is intentionally being dropped.
+ 	 */
+ 	cloneCurrentSession(options?: { persist?: boolean }): SessionManager {
++		// A non-persisting clone is pure in-memory bookkeeping; a persisting one
++		// would put a second writer on the owned transcript.
++		if (options?.persist !== false) this.assertOriginalTransitionAllowed("clone the session for another writer");
+ 		const persist = options?.persist ?? this.#persist;
+ 		const clone = new SessionManager(this.#cwd, this.#sessionDir, persist, this.#storage);
+ 		clone.#suppressBreadcrumb = true;
+@@ -1344,6 +1487,7 @@ export class SessionManager {
+ 	}
+ 
+ 	restoreState(snapshot: SessionManagerStateSnapshot): void {
++		this.#assertOriginalFileRetained(snapshot.sessionFile);
+ 		this.#closeWriterEventually();
+ 		this.#diskTail = Promise.resolve();
+ 		this.#clearDiskError();
+@@ -1408,6 +1552,9 @@ export class SessionManager {
+ 	}
+ 
+ 	async #setSessionFile(sessionFile: string, loadedSession?: SessionLoadResult): Promise<void> {
++		this.#assertOriginalFileRetained(sessionFile);
++		assertNoForeignOriginalWriter(sessionFile, this.#originalLease);
++		assertEnrolledSourceAdmitted(sessionFile, this.#originalLease);
+ 		await this.#drainAndCloseWriter();
+ 		this.#clearDiskError();
+ 		this.#draftOnlySessionCleanupArmed = false;
+@@ -1456,7 +1603,9 @@ export class SessionManager {
+ 		} else if (headerCwd && headerCwd !== path.resolve(this.#cwd)) {
+ 			// Header cwd not enterable: keep runtime cwd but mark fallback
+ 			// so workspace changes stay runtime-only until the transcript
+-			// is relocated.
++			// is relocated. A cooperating original has no such fallback — it
++			// must retain its own recorded cwd — so refuse before adopting one.
++			this.assertOriginalTransitionAllowed(`resume under a fallback working directory instead of ${headerCwd}`);
+ 			this.#fallbackRuntimeOnly = true;
+ 		} else {
+ 			this.#fallbackRuntimeOnly = false;
+@@ -1490,6 +1639,9 @@ export class SessionManager {
+ 
+ 	/** Delete a session file and its artifact directory. ENOENT is treated as success. */
+ 	async dropSession(sessionPath: string): Promise<void> {
++		if (this.#originalLease && path.resolve(sessionPath) === this.#originalLease.originalFile) {
++			this.assertOriginalTransitionAllowed("delete the cooperating original");
++		}
+ 		await this.#drainAndCloseWriter();
+ 		try {
+ 			await this.#storage.deleteSessionWithArtifacts(sessionPath);
+@@ -1503,6 +1655,7 @@ export class SessionManager {
+ 	 * @returns the old and new session file paths, or undefined when not persisting.
+ 	 */
+ 	async fork(): Promise<{ oldSessionFile: string; newSessionFile: string } | undefined> {
++		this.assertOriginalTransitionAllowed("fork the session");
+ 		if (!this.#persist || !this.#sessionFile) return undefined;
+ 
+ 		const oldSessionFile = this.#sessionFile;
+@@ -1563,6 +1716,7 @@ export class SessionManager {
+ 		) {
+ 			return;
+ 		}
++		this.assertOriginalTransitionAllowed("move the session");
+ 
+ 		let sessionFileExisted = false;
+ 		// Track source+dest for concurrent completed appends during relocation
+@@ -1696,6 +1850,7 @@ export class SessionManager {
+ 		options?: { sessionDir?: string; suppressBreadcrumb?: boolean },
+ 		storage: SessionStorage = new FileSessionStorage(),
+ 	): Promise<SessionManager> {
++		this.assertOriginalTransitionAllowed("copy the session into a new native identity");
+ 		const sessionDir = options?.sessionDir ?? SessionManager.getDefaultSessionDir(this.#cwd, undefined, storage);
+ 		const manager = new SessionManager(this.#cwd, sessionDir, true, storage);
+ 		manager.#suppressBreadcrumb = options?.suppressBreadcrumb === true;
+@@ -1865,7 +2020,14 @@ export class SessionManager {
+ 		}
+ 	}
+ 
+-	/** Flush, then close the append writer. */
++	/**
++	 * Flush, then close the append writer.
++	 *
++	 * For a cooperating original this is also where ownership goes back: the
++	 * drain below is the terminal one, so a sealed manager that reaches the end
++	 * of this method without a latched failure has provably quiesced and can
++	 * relinquish its lease. A throw anywhere above keeps it.
++	 */
+ 	async close(): Promise<void> {
+ 		if (!this.#persist) return;
+ 		await this.#scheduleDiskWork(async () => {
+@@ -1880,6 +2042,7 @@ export class SessionManager {
+ 		// a fire-and-forget publish is still on the wire.
+ 		await this.#storage.drain();
+ 		if (this.#diskFailure) throw this.#diskFailure;
++		this.#releaseOriginalOwnershipAfterTerminalDrain();
+ 	}
+ 
+ 	/**
+@@ -1940,6 +2103,7 @@ export class SessionManager {
+ 			this.#fallbackRuntimeOnly = true;
+ 			return;
+ 		}
++		this.assertOriginalTransitionAllowed("retarget the session working directory");
+ 		this.#cwd = resolvedCwd;
+ 		this.#fallbackRuntimeOnly = true;
+ 		if (this.#sessionFile) {
+@@ -2723,6 +2887,7 @@ export class SessionManager {
+ 		const sourceSessionFile = this.#sessionFile;
+ 		const branchPath = this.getBranch(leafId);
+ 		if (branchPath.length === 0) throw new Error(`Entry ${leafId} not found`);
++		this.assertOriginalTransitionAllowed("branch the session into a new native identity");
+ 
+ 		// Drop label entries from the path; recreate them fresh from the resolved map.
+ 		const entriesToKeep = branchPath.filter(entry => entry.type !== "label");
+@@ -2852,6 +3017,10 @@ export class SessionManager {
+ 			resetInheritedCost?: boolean;
+ 		},
+ 	): Promise<SessionManager> {
++		// A source-based fork copies an enrolled transcript's history into a new
++		// native identity. Refuse before the read and before the destination is
++		// minted, whichever process asked.
++		assertEnrolledSourceAdmitted(sourcePath, undefined);
+ 		const dir = sessionDir ?? SessionManager.getDefaultSessionDir(cwd, undefined, storage);
+ 		const manager = new SessionManager(cwd, dir, true, storage);
+ 		manager.#suppressBreadcrumb = options?.suppressBreadcrumb === true;
+@@ -2909,13 +3078,22 @@ export class SessionManager {
+ 	 * Open a specific session file.
+ 	 * @param sessionDir Optional dir for /new or /branch; defaults to the file's parent.
+ 	 * @param options.initialCwd Cwd to use when the file is empty or missing.
++	 * @param options.originalOwnership Writer-process lease already held for
++	 * this exact file by the cooperating admission path. Installing it here,
++	 * before the load is applied, is what keeps every write this open performs
++	 * — migration repair included — inside the owned regime.
+ 	 */
+ 	static async open(
+ 		filePath: string,
+ 		sessionDir?: string,
+ 		storage: SessionStorage = new FileSessionStorage(),
+-		options?: { initialCwd?: string; suppressBreadcrumb?: boolean },
++		options?: { initialCwd?: string; suppressBreadcrumb?: boolean; originalOwnership?: OriginalWriterLease },
+ 	): Promise<SessionManager> {
++		// FIRST statement on purpose. The loader below migrates, repairs and can
++		// rewrite what it reads, so an enrolled source that arrived without its
++		// admitted lease must be refused before any of that runs — not later at
++		// `#setSessionFile`, which the initial SDK open only reaches post-load.
++		assertEnrolledSourceAdmitted(filePath, options?.originalOwnership);
+ 		const loaded = await loadSessionFile(filePath, storage);
+ 		const header = loaded.entries.find(entry => entry.type === "session") as SessionHeader | undefined;
+ 		// Resume into the session's recorded cwd only when it is verifiably
+@@ -2934,6 +3112,10 @@ export class SessionManager {
+ 				: path.dirname(path.resolve(filePath)));
+ 		const manager = new SessionManager(cwd, dir, true, storage);
+ 		manager.#suppressBreadcrumb = options?.suppressBreadcrumb === true;
++		if (options?.originalOwnership) {
++			manager.#sessionFile = path.resolve(filePath);
++			manager.adoptOriginalOwnership(options.originalOwnership);
++		}
+ 		await manager.#setSessionFile(filePath, loaded);
+ 		return manager;
+ 	}
 diff --git a/src/session/tool-choice-queue.ts b/src/session/tool-choice-queue.ts
 index cacbb5a..1938cbe 100644
 --- a/src/session/tool-choice-queue.ts
@@ -15962,6 +18111,12 @@ new mode 100644
 diff --git a/dist/types/plan-mode/startup.d.ts b/dist/types/plan-mode/startup.d.ts
 old mode 100755
 new mode 100644
+diff --git a/dist/types/session/original-session-lease.d.ts b/dist/types/session/original-session-lease.d.ts
+old mode 100755
+new mode 100644
+diff --git a/dist/types/session/original-session-ownership.d.ts b/dist/types/session/original-session-ownership.d.ts
+old mode 100755
+new mode 100644
 diff --git a/dist/types/tools/browser/cdp-evaluation-channel.d.ts b/dist/types/tools/browser/cdp-evaluation-channel.d.ts
 old mode 100755
 new mode 100644
@@ -15984,6 +18139,12 @@ diff --git a/src/plan-mode/plan-review-document.ts b/src/plan-mode/plan-review-d
 old mode 100755
 new mode 100644
 diff --git a/src/plan-mode/startup.ts b/src/plan-mode/startup.ts
+old mode 100755
+new mode 100644
+diff --git a/src/session/original-session-lease.ts b/src/session/original-session-lease.ts
+old mode 100755
+new mode 100644
+diff --git a/src/session/original-session-ownership.ts b/src/session/original-session-ownership.ts
 old mode 100755
 new mode 100644
 diff --git a/src/tools/browser/cdp-evaluation-channel.ts b/src/tools/browser/cdp-evaluation-channel.ts

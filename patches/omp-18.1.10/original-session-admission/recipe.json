@@ -1,0 +1,66 @@
+{
+  "slice": "original-session-admission",
+  "module": "@oh-my-pi/pi-coding-agent/session/original-session-ownership",
+  "protocol": 1,
+  "appliesTo": "patches/omp-18.1.10/original-session-admission/baseline.json",
+  "patch": "original-session-admission.patch",
+  "reproduce": "bun patches/omp-18.1.10/original-session-admission/run-isolated.ts",
+  "runnerInputs": "Accepts the pinned pre-slice installed package or the recorded authored package. Copies it into a disposable directory, applies the slice only to the pre-slice tree, checks every authored file, and launches isolated native processes. An optional first argument selects one exact named check.",
+  "executed": true,
+  "note": "This slice is not an installer patch. The complete installer patch is regenerated against the published 18.1.10 archive, whose SHA512 matched the frozen lock. Composition002 installation evidence remains historical; correction-specific installation and runtime receipts identify the corrected tree separately.",
+  "installerPatchSha256": "d6c4a88064603ff658d27f70b3b35817cbaed98d1862e938e7f7cf62d588a355",
+  "exports": {
+    "ORIGINAL_SESSION_OWNERSHIP_PROTOCOL": "literal 1",
+    "NativeOriginalBinding": "type",
+    "NativeOriginalSource": "type",
+    "inspectOriginalParticipation": "(ownershipDirectory, source) => Promise<{ok:true,binding}|{ok:false,reason,message}>; readonly",
+    "observeEnrolledOriginal": "(ownershipDirectory, binding) => Promise<NativeOriginalSource>; readonly",
+    "createCooperativeOriginal": "({ownershipDirectory,cwd,sessionDirectory}) => Promise<{manager,binding}>; enrollment before the first original header, never retrospective",
+    "openAdmittedOriginal": "({ownershipDirectory,binding,source,commandId}) => Promise<SessionManager>; actual writer-process lease before writable load"
+  },
+  "ownershipDirectoryArgument": {
+    "nativeDefault": null,
+    "hostConvention": "canonical dirname(getSessionsDir(profile))/original-session-ownership",
+    "requirement": "All participants pass the identical canonical absolute spelling. Native applies path.resolve, not realpath. Inspection never creates this directory. Enrollers also use a canonical sessionDirectory; original-file aliases are refused."
+  },
+  "ownershipDirectoryLayout": {
+    "protocol.json": "{protocol:1} generation marker",
+    "records/<registryId>.json": "enrollment record; registryId = sha256(namespace\\0protocol\\0id\\0nativeId)",
+    "files/<fileKey>.json": "canonical-path index; fileKey = sha256(namespace\\0protocol\\0file\\0canonicalFile)",
+    "leases/<registryId>.lock": "stable FileLock key; kernel-named on Linux/Windows, physical flock sidecar on other Unix platforms; physical sidecars are never unlinked"
+  },
+  "transcriptSidecar": "<sessionDir>/.<basename>.original-enrollment.json - durable enrolled-source marker; restricts only, never grants",
+  "changes": [
+    "Native enrollment and ownership helpers, guarded native SessionManager writes and identity transitions, high-level AgentSession pre-effect guards, and orphan-backup recovery refusal for marked originals.",
+    "Worker protocol 73 open-original mode with classified refusal/unknown outcomes and exact live admitted-handle checks.",
+    "Durable host admission service with captured preparation, command coalescing and reconciliation, exact retained binding, historical receipts that never reopen, and joined disposal.",
+    "Imported workers cannot enable browser recovery or detach through preserveReconnect; Root drains public actions, then native admission, then the general runtime."
+  ],
+  "supportedRegime": "Conditional known-cooperating SDK writers only. Free locks, quiet files, PID absence or markers alone never establish participation. The bundled stock CLI is not automatically enrolled or rebuilt by these source-module changes.",
+  "supportedIdentityOperations": "Explicit admitted open/resume of the same original native ID, canonical file and recorded/canonical cwd. Unsupported new/fork/switch/move/revive-elsewhere/branch identity transitions refuse before effects and remain backlog, not waived requirements.",
+  "leaseLifetime": "Seal and successful terminal native drain are required before release. Seal alone does not release; failed drain retains ownership until proven cleanup or process death.",
+  "leaseBackend": "Pinned pi-natives 18.1.10 selects Linux/Windows kernel-name ownership without requiring or fabricating a filesystem sidecar. Other Unix platforms require the acquired sidecar inode and check it before every write, including an already-open append writer. Actual native acquired state remains mandatory on all platforms; original parent/file identity guards and terminal-drain release semantics are unchanged.",
+  "hostServiceLifecycle": "Cold reopen uses prepare({binding}) then admit with a fresh explicit command. getRetainedHandle is lookup-only. An admitted receipt is historical, not live ownership. Superseded non-current admitted handles are pruned only after a new writer owns the identical binding; failed-cleanup handles remain retained.",
+  "validation": {
+    "historicalComposition002": "The following native18, worker9, direct-service, typecheck and build results belong to the immutable pre-correction macOS composition002, not to the corrected tree.",
+    "platform": "macOS arm64 (historical composition002)",
+    "nativeContract": "18 passed on composition002, including real competing/crashed owners, failed drain retention, ordinary patched open refusal, stale source checks, and a real registered high-level before-switch hook whose non-entry is observed. Its first Linux execution failed 16 of 18 checks because acquired kernel-name locks have no filesystem sidecar; those raw failures are preserved.",
+    "productionWorkerAndService": "9 passed across two suites, using real native files, OS leases, production worker entry, durable SQLite receipts and real process termination.",
+    "directServiceSmoke": "Exact original identity/history retained across cold and same-service reopen; duplicate receipt never opens; 3 owned workers reaped; 14 model-discovery fetch attempts blocked before transport.",
+    "typecheck": "passed",
+    "productionBuild": "passed; existing large-chunk warning retained",
+    "correctionMacOS": "The new targeted already-open writer / replaced sidecar control failed against unchanged composition002 and passed with the two-file native correction. Both runs used real FileLock and SessionManager, with zero network attempts.",
+    "correctionLinuxInstall": "Physical deckbox Linux x64, Bun 1.3.14, process umask 0022: frozen install reproduced all 3129 corrected native package files byte-for-byte and mode-for-mode; bun.lock unchanged. A mermaid extraction failure and partial graph are preserved. Recovery used only a private mermaid cache whose 1171 files matched the published archive verified against the lock SHA512; no native package edits or chmod.",
+    "correctionLinuxNative": "18 passed, 0 failed, 1 explicitly skipped filesystem-sidecar-only control. Real cross-process exclusion, release, crash recovery and failed terminal drain retention passed with no fabricated sidecar. The first corrected run's obsolete unconditional fixture assertion failed and is preserved; it was removed without changing production source.",
+    "correctionLinuxWorkerAndService": "9 passed across the two existing production worker/service suites, 73 assertions. Disposable settings and credentials only; model-discovery fetches blocked before transport.",
+    "guiLaunchesByWork": 0,
+    "providerTurns": 0,
+    "credentialSeeding": false
+  },
+  "limits": [
+    "No exclusion of unpatched stock/bundled writers, arbitrary direct filesystem or FileSessionStorage writers, non-file backends, in-memory replication or an outside actor deleting the marker.",
+    "Windows behavior is not established by these macOS/Linux runs. The Linux sidecar-replacement check is explicitly skipped because its pinned backend has no filesystem sidecar.",
+    "Plan save/approve-fresh and btw-promotion guards are source-verified at their owning pre-effect boundary; those provider-dependent scenarios were not executed.",
+    "Root owns discovery, public DTO/HTTP/UI, catalog reservation/publication and full-host integration acceptance. The service fixture controls only the catalog reservation port, not the native manager, worker or ownership mechanism."
+  ]
+}

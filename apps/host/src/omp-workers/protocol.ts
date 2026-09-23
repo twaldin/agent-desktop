@@ -12,9 +12,163 @@ import type { NativeSessionForkInput } from "../omp/session-fork";
 import type { TodoMutationRequest } from "../../../../packages/shared/src/session-todos";
 import type { ResetPolicyWireRequest, ResetPolicyWireResponse } from "./reset-policy-wire";
 import type { WorkerResetPolicyReconnect } from "./reconnect-wire";
+import { isAbsolute } from "node:path";
+/** Type-only: the daemon parent never loads the native SDK through this module. */
+import type { NativeOriginalBinding, NativeOriginalSource } from "@oh-my-pi/pi-coding-agent/session/original-session-ownership";
 export type { NativeSessionForkInput, NativeSessionForkResult } from "../omp/session-fork";
 
-export const WORKER_PROTOCOL_VERSION = 72;
+// 73 introduced the "open-original" init mode. The ready/recovered handshake
+// rejects any other version, so a worker without native original admission can
+// never answer an admission request by silently opening the file some other way.
+export const WORKER_PROTOCOL_VERSION = 73;
+
+/** Mirrors the native ORIGINAL_SESSION_OWNERSHIP_PROTOCOL literal. The daemon
+ * must not import the SDK, so the child asserts the two agree before any
+ * native effect and the parent refuses a binding that claims anything else. */
+export const ORIGINAL_SESSION_OWNERSHIP_PROTOCOL = 1;
+export type { NativeOriginalBinding, NativeOriginalSource };
+
+/** Exactly the native admission input: the enrolled binding, the reviewed
+ * read-only source and the caller's durable command id. No worker-side field
+ * is added, defaulted or recomputed on the way to the native writer. */
+export interface OriginalAdmissionRequest {
+  ownershipDirectory: string;
+  binding: NativeOriginalBinding;
+  source: NativeOriginalSource;
+  commandId: string;
+}
+/** Returned by the child that actually ran the admitted native open, built
+ * from the live native manager rather than echoed from the request. */
+export interface OriginalAdmissionReceipt {
+  protocol: number;
+  commandId: string;
+  ownershipDirectory: string;
+  enrollmentId: string;
+  registryId: string;
+  nativeId: string;
+  originalFile: string;
+  recordedCwd: string;
+  canonicalCwd: string;
+}
+
+/** Proven pre-effect refusal: nothing was opened, locked, moved or written. */
+export class OriginalAdmissionRefusal extends Error {
+  readonly code = "ORIGINAL_SESSION_NOT_SUBMITTED" as const;
+  constructor(readonly reason: string, message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "OriginalAdmissionRefusal";
+  }
+}
+/** Effects may have begun. Never downgrade one of these to a refusal. */
+export class OriginalAdmissionOutcomeUnknown extends Error {
+  readonly code = "OUTCOME_UNKNOWN" as const;
+  constructor(readonly reason: string, message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "OriginalAdmissionOutcomeUnknown";
+  }
+}
+/** Native and worker refusals both carry code+reason; read them structurally so
+ * an error that crossed IPC is classified exactly like a local one. */
+export function originalAdmissionCode(error: unknown): RemoteError["code"] | undefined {
+  if (!error || typeof error !== "object" || !("code" in error)) return undefined;
+  const { code } = error;
+  return code === "ORIGINAL_SESSION_NOT_SUBMITTED" || code === "OUTCOME_UNKNOWN" ? code : undefined;
+}
+export function originalAdmissionReason(error: unknown): string | undefined {
+  if (!error || typeof error !== "object" || !("reason" in error)) return undefined;
+  const { reason } = error;
+  return typeof reason === "string" && reason.length > 0 && reason.length <= MAX_ADMISSION_TEXT ? reason : undefined;
+}
+
+const MAX_ADMISSION_TEXT = 512;
+const MAX_ADMISSION_PATH = 4_096;
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+function admissionText(value: unknown, field: string, max = MAX_ADMISSION_TEXT): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > max || value.includes("\0"))
+    throw new OriginalAdmissionRefusal("admission-input-invalid", `Original session admission requires ${field}`);
+  return value;
+}
+function admissionPath(value: unknown, field: string): string {
+  const text = admissionText(value, field, MAX_ADMISSION_PATH);
+  if (!isAbsolute(text))
+    throw new OriginalAdmissionRefusal("admission-input-invalid", `Original session admission requires an absolute ${field}`);
+  return text;
+}
+function admissionNumber(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value))
+    throw new OriginalAdmissionRefusal("admission-input-invalid", `Original session admission requires a numeric ${field}`);
+  return value;
+}
+/** Whitelist-copies the enrolled binding; any malformed field is a proven
+ * pre-effect refusal rather than a degraded admission. */
+export function copyOriginalBinding(value: NativeOriginalBinding): NativeOriginalBinding {
+  // Crosses IPC: every field below is validated before it is used.
+  const binding = value as Partial<Record<keyof NativeOriginalBinding, unknown>> | null;
+  if (!binding || typeof binding !== "object" || Array.isArray(binding))
+    throw new OriginalAdmissionRefusal("admission-input-invalid", "Original session admission requires an enrolled binding");
+  if (binding.protocol !== ORIGINAL_SESSION_OWNERSHIP_PROTOCOL)
+    throw new OriginalAdmissionRefusal("ownership-protocol-unsupported", "This original session ownership binding uses an unsupported native protocol");
+  return { protocol: ORIGINAL_SESSION_OWNERSHIP_PROTOCOL,
+    enrollmentId: admissionText(binding.enrollmentId, "an enrollment id"),
+    registryId: admissionText(binding.registryId, "a registry id"),
+    originalFile: admissionPath(binding.originalFile, "original session file"),
+    nativeId: admissionText(binding.nativeId, "the original native session id"),
+    recordedCwd: admissionPath(binding.recordedCwd, "recorded working directory"),
+    canonicalCwd: admissionPath(binding.canonicalCwd, "canonical working directory") };
+}
+/** Whitelist-copies the reviewed read-only observation the native writer
+ * revalidates under its lease; the digest and full file identity are retained. */
+export function copyOriginalSource(value: NativeOriginalSource): NativeOriginalSource {
+  // Crosses IPC: every field below is validated before it is used.
+  const source = value as Partial<Record<keyof NativeOriginalSource, unknown>> | null;
+  if (!source || typeof source !== "object" || Array.isArray(source))
+    throw new OriginalAdmissionRefusal("admission-input-invalid", "Original session admission requires a reviewed source");
+  const observed = source.fileIdentity as Partial<Record<keyof NativeOriginalSource["fileIdentity"], unknown>> | null;
+  if (!observed || typeof observed !== "object" || Array.isArray(observed))
+    throw new OriginalAdmissionRefusal("admission-input-invalid", "Original session admission requires the reviewed file identity");
+  const contentSha256 = admissionText(source.contentSha256, "the reviewed content digest");
+  if (!SHA256_HEX.test(contentSha256))
+    throw new OriginalAdmissionRefusal("admission-input-invalid", "Original session admission requires a sha256 content digest");
+  return { originalFile: admissionPath(source.originalFile, "original session file"),
+    nativeId: admissionText(source.nativeId, "the original native session id"),
+    recordedCwd: admissionPath(source.recordedCwd, "recorded working directory"),
+    canonicalCwd: admissionPath(source.canonicalCwd, "canonical working directory"),
+    contentSha256,
+    fileIdentity: { dev: admissionNumber(observed.dev, "device id"), ino: admissionNumber(observed.ino, "inode"),
+      size: admissionNumber(observed.size, "size"), mtimeMs: admissionNumber(observed.mtimeMs, "mtime"),
+      ctimeMs: admissionNumber(observed.ctimeMs, "ctime"), birthtimeMs: admissionNumber(observed.birthtimeMs, "birthtime") } };
+}
+/** Copies the admission verbatim and blocks an identity transition before any
+ * native effect: the reviewed source must still describe the enrolled original,
+ * never a moved, revived, forked or newly branched one. */
+export function parseOriginalAdmissionRequest(value: OriginalAdmissionRequest): OriginalAdmissionRequest {
+  // Crosses IPC: every field below is validated before it is used.
+  const request = value as Partial<Record<keyof OriginalAdmissionRequest, unknown>> | null;
+  if (!request || typeof request !== "object" || Array.isArray(request))
+    throw new OriginalAdmissionRefusal("admission-input-invalid", "Original session admission requires its native input");
+  const binding = copyOriginalBinding(request.binding as NativeOriginalBinding);
+  const source = copyOriginalSource(request.source as NativeOriginalSource);
+  if (source.nativeId !== binding.nativeId || source.originalFile !== binding.originalFile
+    || source.recordedCwd !== binding.recordedCwd || source.canonicalCwd !== binding.canonicalCwd)
+    throw new OriginalAdmissionRefusal("binding-source-mismatch",
+      "The reviewed original session no longer matches its enrolled identity; switching, moving, reviving or forking an enrolled original is not supported");
+  return { ownershipDirectory: admissionPath(request.ownershipDirectory, "ownership directory"),
+    binding, source, commandId: admissionText(request.commandId, "a command id") };
+}
+/** The child proves it took the admitted path; its identity fields come from the
+ * live native manager, so a worker that opened anything else cannot answer. */
+export function assertOriginalAdmissionReceipt(value: unknown, request: OriginalAdmissionRequest): void {
+  // Crosses IPC: compared field by field against the exact admission sent.
+  const receipt = value as Partial<Record<keyof OriginalAdmissionReceipt, unknown>> | null | undefined;
+  if (!receipt || typeof receipt !== "object" || Array.isArray(receipt))
+    throw new OriginalAdmissionOutcomeUnknown("admission-receipt-missing", "The OMP worker did not return a native original admission receipt");
+  if (receipt.protocol !== ORIGINAL_SESSION_OWNERSHIP_PROTOCOL || receipt.commandId !== request.commandId
+    || receipt.ownershipDirectory !== request.ownershipDirectory
+    || receipt.enrollmentId !== request.binding.enrollmentId || receipt.registryId !== request.binding.registryId
+    || receipt.nativeId !== request.binding.nativeId || receipt.originalFile !== request.binding.originalFile
+    || receipt.recordedCwd !== request.binding.recordedCwd || receipt.canonicalCwd !== request.binding.canonicalCwd)
+    throw new OriginalAdmissionOutcomeUnknown("admission-receipt-changed", "The OMP worker changed the admitted original session identity");
+}
 export type CommitGenerationInput = Omit<import("@oh-my-pi/pi-coding-agent/commit").GenerateGitCommitFromDiffOptions, "signal" | "onProgress">;
 export type CommitGenerationResult = import("@oh-my-pi/pi-coding-agent/commit").GeneratedGitCommit & { message: string };
 export interface SessionSnapshot {
@@ -34,6 +188,9 @@ export interface SessionSnapshot {
 export type WorkerInit = { agentDir?: string; resetPolicy?: { workerEpoch: string } } & (
   | { mode: "create"; options: Omit<OmpSessionOptions, "onEvent"> }
   | { mode: "open"; options: Omit<OmpOpenOptions, "onEvent"> }
+  /** Admitted cooperative original: the child acquires the native writer lease
+   * itself and never falls through to the ordinary unmanaged open above. */
+  | { mode: "open-original"; options: OriginalAdmissionRequest }
   | { mode: "discovery" }
   | { mode: "mcp-owner"; owner: { id: string; cwd: string } }
   | { mode: "browser"; owner: { id: string; cwd: string } }
@@ -168,7 +325,10 @@ export type ParentMessage = ({ type: "request"; id: string } & WorkerOperation)
   | { type: "eventAck"; sequence: number }
   /** The child exits only after its disposal result has reached the owner. */
   | { type: "disposeAck"; id: string };
-export interface RemoteError { name: string; message: string; code?: "OUTCOME_UNKNOWN" | "PLAN_REJECTED" | "TODOS_REJECTED" | "TREE_REJECTED" | "PROCESSES_REJECTED" }
+/** `reason` accompanies the native original-admission codes and is preserved
+ * verbatim: the caller must be able to tell a proven refusal from an unknown
+ * outcome, and which refusal it was. */
+export interface RemoteError { name: string; message: string; code?: "OUTCOME_UNKNOWN" | "ORIGINAL_SESSION_NOT_SUBMITTED" | "PLAN_REJECTED" | "TODOS_REJECTED" | "TREE_REJECTED" | "PROCESSES_REJECTED"; reason?: string }
 export type ChildMessage =
   | ResetPolicyWireRequest
   | { type: "browserEvaluationFrame"; binding: BrowserEvaluationBinding; frame: BrowserEvaluationFrame }
@@ -212,8 +372,11 @@ function remoteErrorMessage(error: Error, seen: Set<Error>, budget: { remaining:
 }
 
 export function remoteError(error: unknown): RemoteError {
-  return error instanceof Error
-    ? { name: error.name.slice(0, 100), message: remoteErrorMessage(error, new Set(), { remaining: MAX_REMOTE_ERROR_DETAILS }),
-      ...("code" in error && (error.code === "OUTCOME_UNKNOWN" || error.code === "PLAN_REJECTED" || error.code === "TODOS_REJECTED" || error.code === "TREE_REJECTED" || error.code === "PROCESSES_REJECTED") ? { code: error.code } : {}) }
-    : { name: "Error", message: "OMP worker operation failed" };
+  if (!(error instanceof Error)) return { name: "Error", message: "OMP worker operation failed" };
+  // A refusal reason accompanies native and host original-session refusals on
+  // every route, including the Plan protocol's own rejection code.
+  const reason = originalAdmissionReason(error);
+  return { name: error.name.slice(0, 100), message: remoteErrorMessage(error, new Set(), { remaining: MAX_REMOTE_ERROR_DETAILS }),
+    ...("code" in error && (error.code === "OUTCOME_UNKNOWN" || error.code === "ORIGINAL_SESSION_NOT_SUBMITTED" || error.code === "PLAN_REJECTED" || error.code === "TODOS_REJECTED" || error.code === "TREE_REJECTED" || error.code === "PROCESSES_REJECTED") ? { code: error.code } : {}),
+    ...(reason === undefined ? {} : { reason }) };
 }

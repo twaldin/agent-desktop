@@ -1,3 +1,10 @@
+import { getSessionsDir } from "@oh-my-pi/pi-utils";
+import { NativeSessionImportDiscovery, canonicalNativeImportProfile } from "./omp-import/discovery";
+import { SessionImportHttp } from "./session-import-http";
+import { NativeOriginalSessionAdmission } from "./omp-import/admission";
+import { OriginalImportRecords, type OriginalImportBinding } from "./session-import-records";
+import { SessionImportActions } from "./session-import-actions";
+import { SESSION_IMPORT_INSPECTION_CAPABILITY, SESSION_IMPORT_ADMISSION_CAPABILITY } from "../../../packages/shared/src/session-import";
 import { GOAL_COMPOSER_CAPABILITY, goalPromptFromDraft } from "../../../packages/shared/src/goal-composer";
 import { SESSION_TREE_CAPABILITY } from "../../../packages/shared/src/session-tree";
 import { SessionTreeHttp, mutateSessionTree, projectTreeJournalReceipt } from "./session-tree-http";
@@ -63,7 +70,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod, mkdir, rename, rm, realpath } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, sep, resolve } from "node:path";
+import { join, sep, resolve, dirname } from "node:path";
 import type { ServerWebSocket } from "bun";
 import { register as registerExitCleanup } from "@oh-my-pi/pi-utils/postmortem";
 import type { CommandEnvelope, CommandResult, HostCommand, HostEvent, HostState, ModelInfo, OmpApprovalMode, OmpSessionControls, SessionSummary } from "@agent-desktop/shared";
@@ -145,6 +152,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   let nativeResetPolicy: NativeResetPolicy | undefined;
   let draftBrowsers: DraftBrowserHttp | undefined;
   let sessionProcesses: SessionProcessesHttp | undefined;
+  let sessionImports: SessionImportHttp | undefined;
+  let originalAdmission: NativeOriginalSessionAdmission | undefined;
   let browserObservations: BrowserObservationHttp | undefined;
   let browserHistory: BrowserHistoryHttp | undefined;
   let browserAutocomplete: BrowserAutocompleteHttp | undefined;
@@ -766,6 +775,34 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   });
 
   const sessionSearch = new SessionSearch(store.host.id, () => store.listSessions(), readStoredSessionText);
+  const importSessionsRoot=getSessionsDir(options.agentDirectory ? resolve(options.agentDirectory) : undefined);
+  const nativeImportDiscovery = new NativeSessionImportDiscovery({ sessionsRoot: importSessionsRoot });
+  const originalImports=new OriginalImportRecords(store);
+  const originalReopens=new Map<string,OriginalImportBinding>();
+  const equalOriginal=(left:OriginalImportBinding,right:OriginalImportBinding)=>
+    (["protocol","registryId","enrollmentId","nativeId","originalFile","recordedCwd","canonicalCwd"] as const).every(key=>left[key]===right[key]);
+  originalAdmission=new NativeOriginalSessionAdmission({
+    dataDirectory:resolve(dataDirectory,"original-imports"),
+    ownershipDirectory:join(await canonicalNativeImportProfile(dirname(importSessionsRoot)),"original-session-ownership"),
+    runtime,resolveReviewedSource:(candidateId,revision)=>nativeImportDiscovery.resolveReviewedSource(candidateId,revision),
+    reserveCatalogIdentity:(source,commandId)=>{
+      if(stopping)throw new Error("The owning host is stopping.");
+      const reopen=originalReopens.get(commandId);
+      if(!reopen){originalImports.reserve(commandId,source);return;}
+      const current=originalImports.bindingForSession(source.nativeId);
+      if(!current||!equalOriginal(reopen,current)||source.nativeId!==current.nativeId||source.originalFile!==current.originalFile
+        ||source.recordedCwd!==current.recordedCwd||source.canonicalCwd!==current.canonicalCwd)throw new Error("The imported original changed before reopening.");
+    },
+    onEvent:onRuntimeEvent,
+  });
+  const importActions=new SessionImportActions({hostId:store.host.id,admission:originalAdmission,records:originalImports,
+    retain:(handle,binding)=>{
+      if(stopping||handles.has(handle.id)||!runtime.isOriginalHandleCurrent(handle)||handle.id!==binding.nativeId
+        ||handle.sessionFile!==binding.originalFile||handle.cwd!==binding.recordedCwd)throw new Error("The admitted original cannot replace another session owner.");
+      handles.set(handle.id,Promise.resolve(handle));publishState();
+    },
+  });
+  sessionImports = new SessionImportHttp(store.host.id, nativeImportDiscovery,importActions);
   const queuedMessages = new QueuedMessagesHttp({ hostId: store.host.id,
     sessionExists: id => !stopping && Boolean(store.getSession(id)), getHandle });
   automations = new AutomationService({
@@ -805,6 +842,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     const preferenceError = Object.keys(preferences?.errors ?? {}).length ? "App preferences are waiting to synchronize with some connected hosts." : undefined;
     return { protocolVersion: 1, sessionUsage: { version: 1, commandVersion: 20, nativePolicy: false }, host: store.host, projects: store.listProjects(), sessions: store.listSessions(),
       sessionExports: SESSION_EXPORT_CAPABILITY,
+      sessionImports: { inspection: SESSION_IMPORT_INSPECTION_CAPABILITY, admission:SESSION_IMPORT_ADMISSION_CAPABILITY },
       sessionForks: SESSION_FORK_CAPABILITY,
       goalComposer: GOAL_COMPOSER_CAPABILITY,
       sidebarNavigation: SIDEBAR_NAVIGATION_CAPABILITY,
@@ -902,6 +940,24 @@ export async function startHost(options: { dataDirectory?: string; port?: number
     }
   }
 
+  async function reopenOriginal(sessionId:string,binding:OriginalImportBinding):Promise<WorkerSession>{
+    const initialCommand=originalImports.commandForSession(sessionId);
+    const retained=initialCommand&&originalAdmission!.getRetainedHandle(initialCommand,binding);
+    if(retained)return retained;
+    const prepared=await originalAdmission!.prepare({binding});
+    if(!prepared.ok)throw new Error(prepared.message);
+    if(stopping||!equalOriginal(prepared.binding,binding))throw new Error("The original import owner changed while preparing to reopen.");
+    const commandId=crypto.randomUUID();
+    originalReopens.set(commandId,binding);
+    try {
+      const result=await originalAdmission!.admit({commandId,preparationId:prepared.preparationId});
+      if(result.status.state!=="admitted")throw new Error("message" in result.status?result.status.message:"The original import did not finish reopening.");
+      const handle=originalAdmission!.getRetainedHandle(commandId,binding);
+      if(!handle||!equalOriginal(result.status.binding,binding)||result.handle!==handle)throw new Error("The reopened original worker is not proven current.");
+      return handle;
+    }finally{originalReopens.delete(commandId);}
+  }
+
   async function getHandle(sessionId: string, locationRecovery = false): Promise<WorkerSession> {
     if (stopping) throw new Error('The host is stopping. Reconnect before opening this session.');
     if (sessionForks.isActive(sessionId)) throw new Error("This conversation is taking an owned Fork snapshot. Wait for it to finish before starting native work.");
@@ -914,7 +970,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       if (!session) throw new Error("Session does not exist on this host.");
       assertWorkspaceAvailable(session.cwd);
       const browserRecovery=store.listBrowserRecoveries().find(record=>record.sessionId===sessionId);
-      const opened=browserRecovery
+      const imported=originalImports.bindingForSession(sessionId);
+      const opened=imported ? reopenOriginal(sessionId,imported) : browserRecovery
         ? recoverBrowserRecord(browserRecovery)
         : runtime.open({ sessionFile: session.sessionFile, interactions: true, approvalOverride: session.approvalOverride, onEvent: event => onRuntimeEvent(sessionId, event) }, store.getSessionEnvironment(sessionId));
       pending = opened.then(async handle => {
@@ -1544,6 +1601,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
           if (network) await refreshNetwork();
           return Response.json(network ? network.state : { status: "unavailable", error: "Tailscale discovery is disabled for this host.", hosts: [], checkedAt: Date.now() });
         }
+        const importResponse = await sessionImports!.route(request, url);
+        if (importResponse) return importResponse;
         if (url.pathname === "/v1/sessions/search") {
           const headers = { "Cache-Control": "no-store", [SESSION_SEARCH_OWNER_HEADER]: store.host.id };
           if (request.headers.get(SESSION_SEARCH_OWNER_HEADER) !== store.host.id) return Response.json({ error: { code: "OWNER_MISMATCH", message: "The chat search owner changed." } }, { status: 409, headers });
@@ -1897,6 +1956,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
   let stopCall: Promise<void> | undefined;
   let stopPreparation: Promise<{
     configurationErrors: unknown[];
+    importDrain?: Promise<void>;
     processDrain?: Promise<void>;
     pullRequestsDrain?: Promise<void>; terminalCreationDrain?: Promise<void>; mcpOwnerDrain: Promise<void>;
     browserCloseDrain?: Promise<void>; browserObservationDrain?: Promise<void>; browserHistoryDrain?: Promise<void>;
@@ -1923,6 +1983,8 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         server!.stop(true); tailServer?.stop(true);
         terminalsHttp!.dispose();
         nativeTerminalsHttp?.dispose();
+        const importDrain = sessionImports?.dispose();
+        void importDrain?.catch(() => {});
         const processDrain = sessionProcesses?.dispose();
         void processDrain?.catch(() => {});
         const planEditorDrain = planExternalEditors?.dispose();
@@ -1950,7 +2012,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         // Native acquisition has no abort API; graceful shutdown drains it.
         const configurationOutcomes = await Promise.allSettled([acquisitions!.dispose(),integrations!.dispose(), workspaces.shutdownSubmissions(), drainRepositoryWatchPeers(), workspaces.shutdownRepositoryWatches()]);
         return { configurationErrors: configurationOutcomes.flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : []),
-          processDrain, pullRequestsDrain, terminalCreationDrain, mcpOwnerDrain, browserCloseDrain, browserObservationDrain, browserHistoryDrain,
+          importDrain, processDrain, pullRequestsDrain, terminalCreationDrain, mcpOwnerDrain, browserCloseDrain, browserObservationDrain, browserHistoryDrain,
           browserAutocompleteDrain, draftBrowserDrain, planEditorDrain, todoEditorDrain };
       })();
       const prepared = await stopPreparation;
@@ -1959,6 +2021,10 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       // already reached their terminal outcome.
       const safeCall = (async () => {
         const errors: unknown[] = [];
+        // Imported originals must relinquish their native writer through the
+        // admission owner before ordinary reconnect handoff begins.
+        try { await prepared.importDrain; } catch(error){errors.push(error);}
+        try { await originalAdmission?.dispose(); } catch(error){errors.push(error);}
         try { await runtime.dispose({preserveReconnect:true}); }
         catch (error) { errors.push(error); }
         // A refused worker handoff can still leave policy callbacks settling
@@ -1970,7 +2036,7 @@ export async function startHost(options: { dataDirectory?: string; port?: number
         if (errors.length > 1) throw new AggregateError(errors, "Native worker handoff and reset-policy drain failed.");
       })();
       stopCleanup ??= (async () => {
-        const outcomes = await Promise.allSettled([prepared.processDrain, prepared.pullRequestsDrain, automations?.dispose(), prepared.mcpOwnerDrain, networkCall, discovery, modelsRefresh, prepared.terminalCreationDrain, prepared.draftBrowserDrain, prepared.browserCloseDrain, prepared.browserObservationDrain, prepared.browserHistoryDrain, prepared.browserAutocompleteDrain,
+        const outcomes = await Promise.allSettled([prepared.importDrain, prepared.processDrain, prepared.pullRequestsDrain, automations?.dispose(), prepared.mcpOwnerDrain, networkCall, discovery, modelsRefresh, prepared.terminalCreationDrain, prepared.draftBrowserDrain, prepared.browserCloseDrain, prepared.browserObservationDrain, prepared.browserHistoryDrain, prepared.browserAutocompleteDrain,
           accounts!.dispose(), terminals!.shutdown(), (async () => {
             const editorOutcome = await Promise.allSettled([prepared.planEditorDrain, prepared.todoEditorDrain]);
             const terminalOutcome = await Promise.allSettled([nativeTerminals?.shutdown()]);
@@ -2014,8 +2080,10 @@ export async function startHost(options: { dataDirectory?: string; port?: number
       // Failed startup can already have admitted session reads. Begin their
       // worker retirement alongside the read drain, rather than waiting for
       // reads that may themselves need the worker to finish stopping.
-      const first = await Promise.allSettled([sessionProcesses?.dispose(), todoExternalEditors?.dispose(), planExternalEditors?.dispose(), mcpOwners?.dispose(), pullRequests?.dispose(), automations?.dispose(), browserObservations?.dispose(), browserHistory?.dispose(), browserAutocomplete?.dispose(), (async () => {
+      const first = await Promise.allSettled([sessionImports?.dispose(), sessionProcesses?.dispose(), todoExternalEditors?.dispose(), planExternalEditors?.dispose(), mcpOwners?.dispose(), pullRequests?.dispose(), automations?.dispose(), browserObservations?.dispose(), browserHistory?.dispose(), browserAutocomplete?.dispose(), (async () => {
         const nativeErrors: unknown[] = [];
+        try { await sessionImports?.dispose(); } catch(failure){nativeErrors.push(failure);}
+        try { await originalAdmission?.dispose(); } catch(failure){nativeErrors.push(failure);}
         try { await runtime?.dispose(); } catch (failure) { nativeErrors.push(failure); }
         try { await nativeResetPolicy?.drain(); } catch (failure) { nativeErrors.push(failure); }
         if (nativeErrors.length) throw new AggregateError(nativeErrors, "Native reset startup rollback did not drain cleanly.");

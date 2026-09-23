@@ -1,3 +1,4 @@
+import { NativeSessionImportDialog } from "./NativeSessionImportDialog";
 import { GoalComposerIntent } from "./GoalComposerIntent";
 import { goalBudgetIssue, goalComposerCommand } from "./goal-composer";
 import { ExtensionStatuses, ExtensionWidgets, useExtensionSessionUi } from "./ExtensionSessionUi";
@@ -1046,6 +1047,8 @@ export function App() {
     resetSupported: state?.tree?.resetContext?.version === 1 && state.tree.resetContext.commandVersion === 25,
   });
   const [treeHistoryOpen, setTreeHistoryOpen] = useState(false);
+  const [nativeImportHost, setNativeImportHost] = useState<string>();
+  useEffect(() => { setNativeImportHost(undefined); }, [hostId]);
   const [treeReset, setTreeReset] = useState<ContextResetConfirmation>();
   const [treeResetBusy, setTreeResetBusy] = useState(false);
   const [treeResetError, setTreeResetError] = useState<string>();
@@ -1438,6 +1441,10 @@ export function App() {
         const current = shortcutOptions.current;
         current.withControls(current.options, commandMenuOrigin.current).actions[owner]?.();
       } }];
+  });
+  if (connected && state?.sessionImports?.inspection.version === 1 && bridge.listNativeSessionImports && bridge.inspectNativeSessionImport) commandMenuActions.push({
+    id: "inspect-native-sessions", title: state.sessionImports.admission?.version===1?"Import native OMP session…":"Inspect native OMP sessions…", description: "Find original sessions on this host before importing", group: "workspace", shortcut: "", deferUntilClose: true,
+    onSelect: () => { const current = desktop.catalog.records.get(hostId); if (current?.connected && current.state?.sessionImports?.inspection.version === 1) setNativeImportHost(hostId); },
   });
   const commandMenuHosts = [...desktop.catalog.records].flatMap(([id, record]) => record.state ? [{ id, name: record.state.host.name, connected: record.connected, searchAvailable: record.state.sessionSearch?.version === 1 }] : []);
   const commandMenuRecentChats = recentChats;
@@ -2474,7 +2481,7 @@ export function App() {
         const label = "projectId" in target ? record?.state?.projects.find(project => project.id === target.projectId)?.name : "sessionId" in target ? record?.state?.sessions.find(session => session.id === target.sessionId)?.title : undefined;
         setGitDialog(undefined); setGitFeedback({ data, label: label ?? record?.state?.host.name ?? data.hostId });
         void data.submitGit(intent);
-      }}/>} 
+      }}/>}
     {branchSwitch && workspace === branchSwitch.request.data && connected && !contentOverlayOpen && <BranchSwitchDialog
       key={branchSwitch.request.refusal.commandId} request={branchSwitch.request}
       isCurrent={() => branchSwitchOwner.current === branchSwitch.owner && branchSwitch.owner.enabled}
@@ -2495,6 +2502,12 @@ export function App() {
         executionChoices={panelPlan.value.executionChoices} receipt={nativePlan.view.receipt} failure={nativePlan.view.failure} error={nativePlan.view.error}
         {...planReviewPorts} externalEditorPorts={planEditorPorts} copy={typeof navigator.clipboard?.writeText === "function" ? copyText : undefined}/>}
     </dialog>
+    {nativeImportHost === hostId && <NativeSessionImportDialog hostId={nativeImportHost} hostName={state?.host.name ?? hostId} connected={connected&&state?.sessionImports?.inspection.version===1}
+      admissionAvailable={state?.sessionImports?.admission?.version===1} bridge={bridge} onClose={() => setNativeImportHost(undefined)} onImported={nativeId=>{
+        const current=desktop.catalog.records.get(hostId);
+        if(!current?.connected||!current.state?.sessions.some(session=>session.id===nativeId&&session.hostId===hostId)){setActionError("The imported conversation is not yet visible in its owning host catalog. Check its outcome before opening it.");return;}
+        setNativeImportHost(undefined);navigate(nativeId,hostId);
+      }}/>}
     {treeReset && treeReset.hostId === hostId && treeReset.sessionId === selectedId && !contentOverlayOpen && <SessionTreeResetContext busy={treeResetBusy} disabled={Boolean(treeResetError) || treeReset.submitted}
       error={treeResetError} onClose={() => { if (!treeResetBusy) closeTreeReset(treeReset); }} onConfirm={() => void confirmTreeReset()}/>}
     {treeHistoryOpen && selectedId && <SessionTreeHistory state={nativeTree.state} view={nativeTree.view} connected={connected} onClose={() => setTreeHistoryOpen(false)} onResetContext={() => requestTreeReset()} onRestore={id => void restoreTreeEdit(id)} onNavigate={(id, summarize, instructions) => void navigateTree(id, summarize, instructions)}/>}

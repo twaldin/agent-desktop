@@ -23,7 +23,7 @@ import { serialize } from "node:v8";
 import type { OmpRuntime, OmpSession, OmpRuntimeEvent } from "../omp";
 import { validBrowserFrameTarget, type BrowserMetadataAvailability, type NativeBrowserTabMetadata } from "@agent-desktop/shared";
 import { projectNativeBrowserFrame } from "../omp-browser/frame";
-import { remoteError, WORKER_PROTOCOL_VERSION, type ChildMessage, type ParentMessage, type SessionSnapshot } from "./protocol";
+import { remoteError, WORKER_PROTOCOL_VERSION, ORIGINAL_SESSION_OWNERSHIP_PROTOCOL, OriginalAdmissionRefusal, parseOriginalAdmissionRequest, type ChildMessage, type OriginalAdmissionReceipt, type ParentMessage, type SessionSnapshot } from "./protocol";
 import { projectWorkerEvent } from "./events";
 import { WorkerReconnectServer, parseWorkerResetPolicyReconnect, sameWorkerResetPolicyReconnect, type WorkerResetPolicyReconnect } from "./reconnect-wire";
 import { ResetPolicyChannel } from "./reset-policy-channel";
@@ -55,6 +55,9 @@ let commitGeneration: Promise<import("./protocol").CommitGenerationResult> | und
 let commitAbort: AbortController | undefined;
 let nativeFork: Promise<import("./protocol").NativeSessionForkResult> | undefined;
 let session: OmpSession | undefined;
+/** Proof that this worker took the admitted native path, built from the live
+ * native manager. Set only by the admitted original init mode. */
+let originalAdmission: OriginalAdmissionReceipt | undefined;
 let initializing = false;
 let stopping = false;
 let shuttingDown: Promise<void> | undefined;
@@ -363,6 +366,19 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
         runtime = new OmpRuntime({ agentDir: init.agentDir, ...(createResetPolicyOwner ? { createResetPolicyOwner } : {}) });
         if (init.mode === "create") session = await runtime.create({ ...init.options, onEvent: emit });
         if (init.mode === "open") session = await runtime.open({ ...init.options, onEvent: emit });
+        if (init.mode === "open-original") {
+          // Parsed again on this side of IPC: the native writer below must see
+          // the exact reviewed source, binding, command id and ownership
+          // directory the host admitted, and nothing else.
+          const admission = parseOriginalAdmissionRequest(init.options);
+          if (stopping) throw new OriginalAdmissionRefusal("worker-stopping", "OMP worker is stopping");
+          session = await runtime.openOriginal({ ...admission, onEvent: emit });
+          originalAdmission = { protocol: ORIGINAL_SESSION_OWNERSHIP_PROTOCOL, commandId: admission.commandId,
+            ownershipDirectory: admission.ownershipDirectory, enrollmentId: admission.binding.enrollmentId,
+            registryId: admission.binding.registryId, canonicalCwd: admission.binding.canonicalCwd,
+            // Read back from the live native manager, never echoed from input.
+            nativeId: session.id, originalFile: session.sessionFile, recordedCwd: session.cwd };
+        }
         if (init.resetPolicy) {
           const current = snapshot();
           if (!current || !resetChannel || resetRoot?.binding.session.sessionId !== current.id)
@@ -370,7 +386,7 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
           resetBinding = parseWorkerResetPolicyReconnect({ workerEpoch: init.resetPolicy.workerEpoch,
             rootSessionId: current.id, sessionFile: current.sessionFile, cwd: current.cwd });
         }
-        respond(true, snapshot());
+        respond(true, originalAdmission ? { admission: originalAdmission } : snapshot());
         break;
       }
       case "enableReconnect": {
@@ -821,6 +837,9 @@ async function request(message: Extract<ParentMessage, { type: "request" }>): Pr
       case "getQueuedMessages": respond(true, requireSession().getQueuedMessages()); break;
       case "mutateQueuedMessages": respond(true, requireSession().mutateQueuedMessages(message.args.mutation)); break;
       case "assertTaskLocationReady": requireSession().assertTaskLocationReady(); respond(true); break;
+      // Identity transitions on an admitted original (relocate, side-chat
+      // promotion, fresh/saved Plan approval) are refused at their owning
+      // OmpRuntime operation boundary, before any native effect.
       case "moveSession": respond(true, await requireSession().moveSession(message.args.cwd)); break;
       case "abort": await requireSession().abort(); respond(true); break;
       case "setModel": await requireSession().setModel(message.args.model); respond(true); break;

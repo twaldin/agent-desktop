@@ -61,6 +61,8 @@ import {
   loadSessionExtensions,
   type AgentSession, type AgentSessionEvent, type AuthStorage,
 } from "@oh-my-pi/pi-coding-agent";
+import { openAdmittedOriginal, ORIGINAL_SESSION_OWNERSHIP_PROTOCOL as NATIVE_ORIGINAL_SESSION_OWNERSHIP_PROTOCOL } from "@oh-my-pi/pi-coding-agent/session/original-session-ownership";
+import { ORIGINAL_SESSION_OWNERSHIP_PROTOCOL, OriginalAdmissionOutcomeUnknown, OriginalAdmissionRefusal, parseOriginalAdmissionRequest, type NativeOriginalBinding, type OriginalAdmissionRequest } from "../omp-workers/protocol";
 import { applyProviderGlobalsFromSettings } from "@oh-my-pi/pi-coding-agent/config/provider-globals";
 import { clearClaudePluginRootsCache } from "@oh-my-pi/pi-coding-agent/discovery/helpers";
 import { discoverTitleSystemPromptFile, resolvePromptInput } from "@oh-my-pi/pi-coding-agent/system-prompt";
@@ -125,6 +127,8 @@ export interface OmpSessionOptions {
   interactions?: boolean;
 }
 export interface OmpOpenOptions { expectedIdentity?: SessionStartupIdentity; sessionFile: string; onEvent?: OmpEventListener; interactions?: boolean; approvalOverride?: OmpApprovalMode }
+/** The native admission input, unchanged, plus this runtime's event listener. */
+export interface OmpOriginalOpenOptions extends OriginalAdmissionRequest { onEvent?: OmpEventListener }
 export interface OmpPromptOptions { goal?: GoalPromptIntent; treeTicket?: TreeTicket; commandId?: string; commandVersion?: number; forceTool?: ForceToolGuard; forceRecovery?: ForceToolRecovery; model?: ModelChoice; thinkingLevel?: string; images?: PreparedPromptImage[]; selectedText?: NativeSelectedTextInput; wholeFiles?: NativeWholeFileInput }
 export interface OmpBrowserTabCreateResult {
   tab: NativeBrowserTabMetadata;
@@ -479,7 +483,54 @@ export class OmpRuntime {
     }
   }
 
-  async #attach(manager: SessionManager, options: OmpSessionOptions, reservation?: string): Promise<OmpSession> {
+  /** Admitted cooperative original. The native writer takes its own process
+   * lease and revalidates the reviewed source under it before any writable
+   * open; this path never performs the ordinary unmanaged open above, and never
+   * substitutes the original's native id, file, recorded cwd or history. */
+  openOriginal(options: OmpOriginalOpenOptions): Promise<OmpSession> {
+    if (this.#disposed) return Promise.reject(new OriginalAdmissionRefusal("runtime-disposed", "OMP runtime is disposed"));
+    return this.#setup(() => this.#openOriginal(options));
+  }
+
+  async #openOriginal(options: OmpOriginalOpenOptions): Promise<OmpSession> {
+    // Every check below precedes the native call, so each refusal is proven to
+    // have had no effect on the original file, its lock or its enrollment.
+    const admission = parseOriginalAdmissionRequest(options);
+    if (NATIVE_ORIGINAL_SESSION_OWNERSHIP_PROTOCOL !== ORIGINAL_SESSION_OWNERSHIP_PROTOCOL)
+      throw new OriginalAdmissionRefusal("ownership-protocol-unsupported",
+        "This pinned native OMP package uses an unsupported original session ownership protocol");
+    const { binding } = admission;
+    if (this.#disposed) throw new OriginalAdmissionRefusal("runtime-disposed", "OMP runtime is disposed");
+    if (this.#reservedFiles.has(binding.originalFile))
+      throw new OriginalAdmissionRefusal("original-already-open", "This original session is already open in this runtime");
+    this.#reservedFiles.add(binding.originalFile);
+    let manager: SessionManager | undefined;
+    try {
+      manager = await openAdmittedOriginal(admission);
+      const sessionFile = manager.getSessionFile();
+      if (manager.getSessionId() !== binding.nativeId || manager.getCwd() !== binding.recordedCwd
+        || !sessionFile || path.resolve(sessionFile) !== binding.originalFile)
+        throw new OriginalAdmissionOutcomeUnknown("admitted-identity-changed",
+          "The admitted native writer changed the original session identity, file or working directory");
+      return await this.#attach(manager, { cwd: binding.recordedCwd, onEvent: options.onEvent }, binding.originalFile, binding);
+    } catch (error) {
+      this.#reservedFiles.delete(binding.originalFile);
+      // A native refusal keeps its exact code and reason; nothing was admitted.
+      if (!manager) throw error;
+      // The writer lease is returned only by a terminal close, and a terminal
+      // close is only terminal once the write barrier is up. Raise it and join
+      // the actual close; never report a failed cleanup as a no-effect refusal.
+      let cleanup: unknown;
+      try { manager.seal(); await manager.close(); } catch (failure) { cleanup = failure; }
+      throw new OriginalAdmissionOutcomeUnknown(cleanup ? "admitted-cleanup-failed" : "admitted-setup-failed",
+        cleanup
+          ? "The admitted original session failed to start and its native cleanup did not complete. Inspect the original session before retrying."
+          : "The admitted original session failed to start after its native writer lease was taken. Inspect the original session before retrying.",
+        { cause: cleanup ? new AggregateError([error, cleanup], "Admitted original session setup and cleanup failed") : error });
+    }
+  }
+
+  async #attach(manager: SessionManager, options: OmpSessionOptions, reservation?: string, admitted?: NativeOriginalBinding): Promise<OmpSession> {
     let context: NativeContext | undefined;
     let native: AgentSession | undefined;
     let bridge: OmpInteractionBridge | undefined;
@@ -635,6 +686,22 @@ export class OmpRuntime {
       let pluginReload: Promise<void> | undefined;
       let goalPreviousTools = session.getEnabledToolNames().filter(name => name !== "goal");
       const assertSessionActive = () => { if (locationChanging) throw new Error("The native task location is changing."); if (disposed) throw new Error("OMP session is disposed"); if (promotionState !== "idle") throw new Error("The native session is transitioning after side-chat promotion. Reopen it after worker retirement."); };
+      // An admitted original retains its native id, file, recorded cwd and
+      // history. No switch/move/revive/new/fork/branch route is proved safe for
+      // one yet, so every such route refuses at its own operation boundary
+      // here, before any summary, provider, tool or identity effect, instead of
+      // reaching the native writer's refusal underneath that work. Returns the
+      // refusal rather than throwing it: the Plan route must present it under
+      // its own durable rejection code.
+      const originalTransitionRefusal = (action: string): Error | undefined => {
+        if (!admitted) return undefined;
+        // The native writer's own refusal wins when it has one, so the host and
+        // the writer can never disagree about why a transition was refused.
+        try { manager.assertOriginalTransitionAllowed(action); }
+        catch (error) { return error instanceof Error ? error : new Error(String(error)); }
+        return new OriginalAdmissionRefusal("unsupported-transition",
+          `Cannot ${action}: this session is the admitted cooperating original, whose regime supports only open and resume.`);
+      };
       const captureSessionId = manager.getSessionId();
       const turnCapture = new TurnCapture(manager, () => {
         // Started native finalization must still join after public disposal fences new reads.
@@ -1000,6 +1067,9 @@ export class OmpRuntime {
         startBtw: input => { assertSessionActive(); if (mcpMutation) throw new Error("MCP servers are reloading."); return btw.start(input); },
         cancelBtw: runId => { assertSessionActive(); return btw.cancel(runId); },
         promoteBtw: (runId, operationId) => {
+          // Promotion branches the transcript into a new native identity.
+          const refusal = originalTransitionRefusal("promote a side answer into a new session");
+          if (refusal) throw refusal;
           assertIdle();
           if (ui?.list().length || interruptsInFlight) throw new Error("Resolve pending native interactions before promoting a side answer.");
           const originId = session.sessionId, originFile = session.sessionFile;
@@ -1335,6 +1405,15 @@ export class OmpRuntime {
           if (!documentRevision || mutation.action === "document" && mutation.documentAction.expectedDocumentRevision !== documentRevision)
             throw Object.assign(new Error("The original Plan document owner changed. Refresh before choosing an action."), { code: "PLAN_REJECTED" });
           const replacing = mutation.action === "save" || mutation.action === "approve" && mutation.context === "fresh";
+          // A saved or fresh approval starts a new native session. Refuse here,
+          // before the exit/summarization and provider work that route runs,
+          // and present it under the Plan protocol's durable rejection code so
+          // the command is released without replay.
+          if (replacing) {
+            const refusal = originalTransitionRefusal("approve a fresh or saved Plan session");
+            if (refusal) throw Object.assign(new Error(refusal.message, { cause: refusal }),
+              { code: "PLAN_REJECTED", reason: "unsupported-transition" });
+          }
           const receipt: PlanDecisionReceipt = { commandId, reviewId: request.reviewId, reviewRevision: request.reviewRevision,
             action: mutation.action, outcome: "applied", artifact: "unchanged", transition: "unchanged", execution: "not-requested" };
           return trackPlanMutation(async () => {
@@ -1674,6 +1753,10 @@ export class OmpRuntime {
         mutateQueuedMessages: mutation => { assertSessionActive(); return queuedMessages.mutate(mutation); },
         assertTaskLocationReady: assertSnapshotReady,
         moveSession: async cwd => {
+          // Relocation migrates the exact native file and cwd this admission
+          // retains, before any snapshot or native flush work.
+          const refusal = originalTransitionRefusal("move the session to another working directory");
+          if (refusal) throw refusal;
           assertSnapshotReady();
           const destination = await requireDirectory(cwd), source = manager.getCwd();
           if (destination === source) return { id: manager.getSessionId(), cwd: source, sessionFile: session.sessionFile! };
